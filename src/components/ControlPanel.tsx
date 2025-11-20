@@ -20,6 +20,8 @@ interface ControlPanelProps {
   midiConnected?: boolean;
   onMidiConnect?: () => void;
   onMidiDisconnect?: () => void;
+  metronomeOn?: boolean;
+  onMetronomeClick?: () => void;
 }
 
 export const ControlPanel: React.FC<ControlPanelProps> = ({
@@ -31,6 +33,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   midiConnected = false,
   onMidiConnect,
   onMidiDisconnect,
+  metronomeOn = false,
+  onMetronomeClick: onMetronomeToggle,
 }) => {
   return (
     <div className="flex items-center gap-4 p-4 bg-gray-100 rounded-lg">
@@ -100,6 +104,19 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
               Connect MIDI
             </>
           )}
+        </Button>
+      )}
+      {onMetronomeToggle && (
+        <Button
+          onClick={onMetronomeToggle}
+          variant={metronomeOn ? "default" : "outline"}
+          className={
+            metronomeOn
+              ? "bg-green-600 hover:bg-green-700 text-blackƒ"
+              : "hover:bg-green-700"
+          }
+        >
+          {metronomeOn ? <>Mute beats</> : <>Play beats</>}
         </Button>
       )}
     </div>

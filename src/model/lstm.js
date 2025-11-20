@@ -21,6 +21,10 @@ window.my = window.my || {};
       //     "Loading weights manifest from",
       //     `${paramsDir}/tfjs/weights_manifest.json`
       //   );
+      console.log(
+        "DEBUG fetch weights manifest, path:",
+        `${paramsDir}/tfjs/weights_manifest.json`
+      );
       const manifest = await fetch(`${paramsDir}/tfjs/weights_manifest.json`);
       const manifestJson = await manifest.json();
       this._params = await tf.io.loadWeights(manifestJson, `${paramsDir}/tfjs`);
@@ -235,15 +239,14 @@ window.my = window.my || {};
     }
 
     forward(feat, hx = null) {
-      // TODO: Input x (batch, seq_len, 5)
-      if (hx === null) hx = this.initHidden(pitchIdx.shape[0]);
+      if (hx === null) hx = this.initHidden(feat.shape[0]);
 
       // Extract input features
-      const pitch = feat.slice([0, 0, 0], [-1, -1, 1]).squeeze([-1]); // (batch, seq_len)
-      const dt = feat.slice([0, 0, 1], [-1, -1, 1]).squeeze([-1]); // (batch, seq_len)
-      const vel = feat.slice([0, 0, 2], [-1, -1, 1]).squeeze([-1]); // (batch, seq_len)
-      const prev_b = feat.slice([0, 0, 2], [-1, -1, 1]).squeeze([-1]); // (batch, seq_len)
-      const prev_db = feat.slice([0, 0, 2], [-1, -1, 1]).squeeze([-1]); // (batch, seq_len)
+      const pitch = feat.slice([0, 0], [-1, 1]).squeeze([-1]).toInt(); // (batch, seq_len)
+      const dt = feat.slice([0, 1], [-1, 1]).squeeze([-1]); // (batch, seq_len)
+      const vel = feat.slice([0, 2], [-1, 1]).squeeze([-1]); // (batch, seq_len)
+      const prev_b = feat.slice([0, 3], [-1, 1]).squeeze([-1]); // (batch, seq_len)
+      const prev_db = feat.slice([0, 4], [-1, 1]).squeeze([-1]); // (batch, seq_len)
 
       // --- Embedding ---
       const pitchEmb = tf.gather(this._params["model.pitch_emb.weight"], pitch);
@@ -274,7 +277,7 @@ window.my = window.my || {};
       }
 
       // --- Head ---
-      beat_pred = tf.add(
+      let beat_pred = tf.add(
         tf.matMul(x, this._params["model.beat_head.0.weight"], false, true),
         this._params["model.beat_head.0.bias"]
       );
@@ -289,7 +292,7 @@ window.my = window.my || {};
         this._params["model.beat_head.3.bias"]
       );
 
-      downbeat_pred = tf.add(
+      let downbeat_pred = tf.add(
         tf.matMul(x, this._params["model.downbeat_head.0.weight"], false, true),
         this._params["model.downbeat_head.0.bias"]
       );
@@ -370,7 +373,7 @@ window.my = window.my || {};
   }
 
   async function testBeatSS() {
-    console.log("Start Beat SS test");
+    console.log("Test MidiBeatSS weights");
     const numBytesBefore = tf.memory().numBytes;
 
     // Create model
@@ -378,8 +381,8 @@ window.my = window.my || {};
     await decoder.init();
 
     // Fetch test case
+    console.log("DEBUG fetch beatss test json");
     const t = await fetch(`${BEATSS_CKPT_DIR}/test.json`).then((r) => r.json());
-
     // Run test
     let totalBeatErr = 0;
     let totalDownBeatErr = 0;
@@ -387,12 +390,13 @@ window.my = window.my || {};
     for (let i = 0; i < 128; ++i) {
       const prevH = him1;
       him1 = tf.tidy(() => {
-        const feats = tf.tensor(t["feats"][i], "float32").expandDims(0);
+        // console.log("DEBUG process input feats", t["feats"][i]);
+        const feats = tf.tensor(t["feats"][i], [1, 5], "float32");
+        // console.log("DEBUG begin test model forward, feat:", feats);
         const [beat_logits, downbeat_logits, hi] = decoder.forward(
           feats,
           prevH
         );
-
         const expectedBeatLogits = tf.scalar(t["beat_logits"][i], "float32");
         const b_err = tf
           .sum(tf.abs(tf.sub(beat_logits, expectedBeatLogits)))
@@ -414,9 +418,17 @@ window.my = window.my || {};
     }
 
     // Check equivalence to expected outputs
-    if (isNaN(totalBeatErr) || totalBeatErr > testThres) {
-      // was 0.015
-      console.log("Test failed with error=", totalBeatErr);
+    if (
+      isNaN(totalBeatErr) ||
+      isNaN(totalDownBeatErr) ||
+      totalBeatErr + totalDownBeatErr > testThres
+    ) {
+      console.log(
+        "Test failed with beat error:",
+        totalBeatErr,
+        "downbeat error:",
+        totalDownBeatErr
+      );
       throw "Failed test";
     } else if (totalBeatErr > 0.015) {
       console.log("Warning: total decoder error is", totalBeatErr);
@@ -439,5 +451,5 @@ window.my = window.my || {};
   my.MidiBeatLSTM = MidiBeatLSTM;
   my.MidiBeatSS = MidiBeatSS;
   my.testMidiBeat = testMidiBeat;
-  my.testBeatSS = testBeatSS
+  my.testBeatSS = testBeatSS;
 })(window.tf, window.my);

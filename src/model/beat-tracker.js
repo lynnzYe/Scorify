@@ -48,28 +48,35 @@
         throw "Specified MIDI note is out of piano's range";
       }
 
+      const log1pDeltaTime = Math.log1p(deltaTime);
       // Run model
-      const [prob, hidden] = tf.tidy(() => {
+      const prevHidden = this.lastHidden;
+      const [beat_prob, downbeat_prob, hidden] = tf.tidy(() => {
         // Pitch within 88 classes
-        let pi = tf.tensor(pitch - 21, [1], "int32");
-
-        // convert delta time to logp1 time
-        let ti = tf.tensor(deltaTime, [1], "float32");
-
-        let vi = tf.tensor(velocity, [1], "float32");
-
-        const him1 = this.lastHidden;
-        const [hatki, hi] = this.dec.forward(pi, ti, vi, him1);
-        const prob = tf.sigmoid(hatki);
-        return [prob, hi];
+        let feat = tf.tensor(
+          [
+            [
+              pitch - 21,
+              log1pDeltaTime,
+              velocity,
+              this.lastBeatPred,
+              this.lastDownbeatPred,
+            ],
+          ],
+          [1, 5],
+          "float32"
+        );
+        const [blgt, dblgt, hi] = this.dec.forward(feat, prevHidden);
+        const beat_prob = tf.sigmoid(blgt);
+        const downbeat_prob = tf.sigmoid(dblgt);
+        return [beat_prob, downbeat_prob, hi];
       });
 
       // Update state
+      if (prevHidden !== null) prevHidden.dispose();
       this.lastTime = time;
-      if (this.lastHidden !== null) this.lastHidden.dispose();
       this.lastHidden = hidden;
-
-      return prob;
+      return [beat_prob, downbeat_prob];
     }
   }
   my.BeatTracker = BeatTracker;

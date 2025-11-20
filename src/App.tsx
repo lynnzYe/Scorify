@@ -8,6 +8,10 @@ import { useMIDI } from "./hooks/useMIDI";
 import { useSoundFont } from "./hooks/useSoundFont";
 import { toast } from "sonner";
 import { Toaster } from "./components/ui/sonner";
+import "./App.css";
+
+import BeatTrackerWrapper from "./model/TSBeatTracker";
+import { clickMetronome } from "./utils/metronome";
 
 export default function App() {
   const [notes, setNotes] = useState<Note[]>([]);
@@ -28,6 +32,82 @@ export default function App() {
   const scrollOffsetRef = React.useRef<number>(0); // Track total scroll distance
 
   /*=============================*
+   *     Load Beat Tracker       *
+   *=============================*/
+  const [loadingMBT, setLoadingMBT] = useState(true);
+  const [status, setStatus] = useState("Initializing model...");
+  const mbtRef = React.useRef<BeatTrackerWrapper | null>(null);
+  const [error, setError] = useState(false);
+  const [metronomeStatus, setMetronomeStatus] = useState(false);
+  const lastTimeMsRef = useRef(0);
+  const audioContextRef = useRef<AudioContext | null>(null);
+
+  function handleMetronomeToggle() {
+    console.log("DEBUG: handle metro toggle. current status:", metronomeStatus);
+    setMetronomeStatus(!metronomeStatus);
+  }
+  useEffect(() => {
+    // initialize AudioContext once
+    if (!audioContextRef.current) {
+      audioContextRef.current = new AudioContext();
+    }
+    // Init Midi Beat Tracker (run tests, load model)
+    async function initMBT() {
+      // try {
+      if (!window.my || !window.my.testBeatSS || !window.my.BeatTracker) {
+        console.log("ERROR: cannot find window.my (...)");
+        setError(true);
+        return;
+      }
+
+      setStatus("Running model self-test...");
+      if (!window._midiTestRan) {
+        window._midiTestRan = true;
+        await window.my.testBeatSS();
+        setStatus("Loading Beat Tracker...");
+      }
+
+      mbtRef.current = new BeatTrackerWrapper();
+      await mbtRef.current.load();
+
+      setStatus("Ready!");
+      setLoadingMBT(false);
+    }
+    initMBT();
+  }, []);
+
+  function trackBeat(pitch: number, velocity: number) {
+    const timeMs = performance.now();
+    if (!mbtRef.current) {
+      return [0, 0];
+    }
+    let [beatProbTensor, downbeatProbTensor] = mbtRef.current.track(
+      timeMs / 1000,
+      pitch,
+      velocity
+    );
+    const beatProb = beatProbTensor.dataSync()[0];
+    const downbeatProb = downbeatProbTensor.dataSync()[0];
+
+    beatProbTensor.dispose();
+    downbeatProbTensor.dispose();
+
+    // console output
+    const last = lastTimeMsRef.current;
+    let dt = last ? ((timeMs - last) / 1000).toFixed(3) : 0;
+    const latencyMs = performance.now() - timeMs;
+    console.log(
+      `⌚ ${dt}s, 🔘 ${pitch} beat=${beatProb.toFixed(
+        3
+      )} downbeat=${downbeatProb.toFixed(3)} (latency ${latencyMs.toFixed(
+        1
+      )}ms)`
+    );
+    lastTimeMsRef.current = timeMs;
+    return [beatProb, downbeatProb];
+  }
+
+  /*=============================*
    *        MIDI Set-up          *
    *=============================*/
   const handleMidiConnect = useCallback(async () => {
@@ -46,17 +126,28 @@ export default function App() {
 
   // Setup MIDI event handlers
   useEffect(() => {
-    console.log("Midi connected?", midi.isConnected);
+    console.log("DEBUG Midi connected?", midi.isConnected);
     if (!midi.isConnected) return;
 
     // Handle MIDI note on (pass in callback)
     midi.onNoteOn((event) => {
-      console.log("Detected midi note on event");
+      console.log("DEBUG Detected midi note on event");
       const { pitch, velocity } = event;
+      const [beat_prob, downbeat_prob] = trackBeat(pitch, velocity);
       // Play sound
       if (sound.isLoaded) {
         sound.playNote(pitch, velocity);
       }
+      // If beat / downbeat && play beats.
+      if (metronomeStatus && audioContextRef.current) {
+        if (beat_prob > 0.5) {
+          clickMetronome(audioContextRef.current, 500);
+        }
+        if (downbeat_prob > 0.5) {
+          clickMetronome(audioContextRef.current, 1000);
+        }
+      }
+
       // Highlight key
       setPressedKeys((prev) => new Set([...prev, pitch]));
     });
@@ -83,7 +174,6 @@ export default function App() {
       toast.success("Piano sounds loaded!");
     }
   }, [sound.isLoaded]);
-
 
   /*========================================*
    *    Real-time Score Visualization       *
@@ -265,7 +355,6 @@ export default function App() {
     scrollOffsetRef.current = 0;
   }, []);
 
-
   /*========================================*
    *       Draw note Keyboard Debugs        *
    *========================================*/
@@ -343,6 +432,25 @@ export default function App() {
     return () => window.removeEventListener("keypress", handleKeyPress);
   }, [drawNote, bpm]);
 
+  /*========================================*
+   *           Begin Components             *
+   *========================================*/
+  if (loadingMBT) {
+    return (
+      <div className="loading-screen">
+        <div className="spinner"></div>
+        <p>{status}</p>
+      </div>
+    );
+  }
+
+  if (error)
+    return (
+      <div className="error-screen">
+        <h2>⚠️ Initialization failed</h2>
+        <p>{error}</p>
+      </div>
+    );
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-50 to-gray-100 p-6">
@@ -350,7 +458,11 @@ export default function App() {
         {/* Header */}
         <Toaster />
         <div className="text-center space-y-2">
-          <h1 className="text-gray-800">Real-Time Piano Transcription</h1>
+          <h1
+            style={{ fontSize: "3rem", fontWeight: "bold", color: "#143f7bff" }}
+          >
+            Real-Time Piano Score Transcription
+          </h1>
           <p className="text-gray-600 text-sm">
             Demo: Q-I (upper), A-J (lower), Z-M (bass), 0 (rest), Enter (new
             bar) - Position advances by random [0-3]
@@ -371,6 +483,8 @@ export default function App() {
           midiConnected={midi.isConnected}
           onMidiConnect={handleMidiConnect}
           onMidiDisconnect={handleMidiDisconnect}
+          metronomeOn={metronomeStatus}
+          onMetronomeClick={handleMetronomeToggle}
         />
 
         {/* Score Display - Upper Half */}

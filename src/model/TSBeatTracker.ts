@@ -1,3 +1,5 @@
+import * as tf from "@tensorflow/tfjs";
+
 class BeatTrackerWrapper {
     private tracker: any;
 
@@ -6,10 +8,12 @@ class BeatTrackerWrapper {
         this.tracker = new window.my.BeatTracker();
     }
 
-    async load() { await this.tracker.loadModel(); }
+    async load() { await this.tracker.init(); }
     predict(data: Float32Array) { return this.tracker.predict(data); }
-}
 
-// const trackerRef = useRef<BeatTrackerWrapper>();
+    track(time: number, pitch: number, velocity: number): [tf.Tensor, tf.Tensor] {
+        return this.tracker.track(time, pitch, velocity)
+    }
+}
 
 export default BeatTrackerWrapper;
