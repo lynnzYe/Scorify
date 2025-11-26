@@ -43,8 +43,11 @@ export default function App() {
   const audioContextRef = useRef<AudioContext | null>(null);
 
   function handleMetronomeToggle() {
-    console.log("DEBUG: handle metro toggle. current status:", metronomeStatus);
-    setMetronomeStatus(!metronomeStatus);
+    setMetronomeStatus((prev) => {
+      const newStatus = !prev;
+      console.log("Toggle from", prev, "to", newStatus);
+      return newStatus;
+    });
   }
   useEffect(() => {
     // initialize AudioContext once
@@ -139,8 +142,9 @@ export default function App() {
         sound.playNote(pitch, velocity);
       }
       // If beat / downbeat && play beats.
+      console.log("DEBUG", "metstatus", metronomeStatus);
       if (metronomeStatus && audioContextRef.current) {
-        if (beat_prob > 0.5) {
+        if (beat_prob > 0.4) {
           clickMetronome(audioContextRef.current, 500);
         }
         if (downbeat_prob > 0.5) {
