@@ -332,7 +332,7 @@ export const PERF_PRESET: NoteEvent[] = [
     { midi: 76, staff: 'treble', timestamp: 6000 },
 ];
 export const BEAT_TYPE_PRESET: boolean[] = [
-    true, true, false, false, false, false, false, true, true, false, true, true, true, true, true, true
+    true, true, false, false, false, true, false, true, true, false, true, true, true, true, true, true
 ]
 export const BEAT_PRESET: BeatEvent[] = [
     { timestamp: 0, isDownbeat: true },
@@ -341,6 +341,7 @@ export const BEAT_PRESET: BeatEvent[] = [
     // { timestamp: 1000, isDownbeat: false },
     // { timestamp: 2000, isDownbeat: false },
     // { timestamp: 2000, isDownbeat: false },
+    { timestamp: 2500, isDownbeat: false },
     { timestamp: 3000, isDownbeat: false },
     { timestamp: 3000, isDownbeat: false },
     { timestamp: 4000, isDownbeat: true },
