@@ -21,8 +21,8 @@ window.my = window.my || {};
       //     "Loading weights manifest from",
       //     `${paramsDir}/tfjs/weights_manifest.json`
       //   );
-      console.log(
-        "DEBUG fetch weights manifest, path:",
+      console.debug(
+        "fetch weights manifest, path:",
         `${paramsDir}/tfjs/weights_manifest.json`
       );
       const manifest = await fetch(`${paramsDir}/tfjs/weights_manifest.json`);
@@ -381,7 +381,7 @@ window.my = window.my || {};
     await decoder.init();
 
     // Fetch test case
-    console.log("DEBUG fetch beatss test json");
+    console.debug("fetch beatss test json");
     const t = await fetch(`${BEATSS_CKPT_DIR}/test.json`).then((r) => r.json());
     // Run test
     let totalBeatErr = 0;

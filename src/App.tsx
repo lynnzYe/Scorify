@@ -12,6 +12,19 @@ import "./App.css";
 
 import BeatTrackerWrapper from "./model/TSBeatTracker";
 import { clickMetronome } from "./utils/metronome";
+import {
+  addBeat,
+  addNote,
+  BEAT_PRESET,
+  BEAT_TYPE_PRESET,
+  BeatEvent,
+  drawBuffedNotes,
+  NoteEvent,
+  PERF_PRESET,
+  resetScorify,
+  setDrawCallback,
+  updateTatum,
+} from "./utils/scorify";
 
 export default function App() {
   const [notes, setNotes] = useState<Note[]>([]);
@@ -77,6 +90,9 @@ export default function App() {
       setLoadingMBT(false);
     }
     initMBT();
+    // Initialize scorify
+    setDrawCallback(drawNote);
+    updateTatum(computeTatum(minBeatLevel));
   }, []);
 
   function trackBeat(pitch: number, velocity: number) {
@@ -129,12 +145,12 @@ export default function App() {
 
   // Setup MIDI event handlers
   useEffect(() => {
-    console.log("DEBUG Midi connected?", midi.isConnected);
+    console.debug("Midi connected?", midi.isConnected);
     if (!midi.isConnected) return;
 
     // Handle MIDI note on (pass in callback)
     midi.onNoteOn((event) => {
-      console.log("DEBUG Detected midi note on event");
+      console.debug("Detected midi note on event");
       const { pitch, velocity } = event;
       const [beat_prob, downbeat_prob] = trackBeat(pitch, velocity);
       // Play sound
@@ -200,10 +216,11 @@ export default function App() {
       newBar: boolean,
       positionInMeasure: number,
       noteType: 2 | 4 | 8 | 16 | 32,
-      currentBpm?: number
+      currentBpm?: number | null
     ) => {
       // Validate that noteType is not finer than minBeatLevel
       // e.g., if minBeatLevel=4 (quarter notes), cannot have 8th (8) or 16th (16) notes
+      midiPitch -= 12; // Weird draw note bug. all down by 12 solves it
       if (noteType > minBeatLevel) {
         console.warn(
           `Note type ${noteType} is finer than min beat level ${minBeatLevel}. Adjusting to ${minBeatLevel}.`
@@ -218,6 +235,7 @@ export default function App() {
 
       // Handle new bar
       if (newBar) {
+        console.debug("start of new bar!, notes:", notes);
         // Guard logic: Calculate where the barline should be placed
         // Find all notes in the current measure
         const currentMeasureNotes = notes.filter(
@@ -227,6 +245,7 @@ export default function App() {
         let barlinePosition = 0; // Default to start of measure
 
         if (currentMeasureNotes.length > 0) {
+          // console.debug("calculate bar with previous notes");
           // Find the last position index in the measure
           const lastPosition = Math.max(
             ...currentMeasureNotes.map((n) => n.positionInMeasure)
@@ -249,6 +268,14 @@ export default function App() {
           // e.g., minBeatLevel=4, quarter note (4): 4/4 = 1 position
           const positionDuration = minBeatLevel / longestDuration;
           barlinePosition = lastPosition + positionDuration;
+          // console.debug(
+          //   "bar position: ",
+          //   barlinePosition,
+          //   "lastpos:",
+          //   lastPosition,
+          //   "notes:",
+          //   notesAtLastPosition
+          // );
         }
 
         // Get the absolute X coordinate for the barline
@@ -307,7 +334,7 @@ export default function App() {
         measureIndex,
         barlineX,
       };
-
+      // console.debug("Set notes:", notes, newNote);
       setNotes((prev) => [...prev, newNote]); // Just append, don't filter
 
       if (currentBpm) {
@@ -347,95 +374,142 @@ export default function App() {
 
   // Demo mode: simulate transcription with keyboard
   const positionCounterRef = React.useRef<number>(0);
+  const beatCounterRef = React.useRef<number>(0);
 
   const handleClear = useCallback(() => {
     setNotes([]);
     setPressedKeys(new Set());
+    resetScorify();
     sound.stopAllNotes();
     currentMeasureRef.current = 0;
     measureStartPositionsRef.current.clear();
     absolutePositionRef.current = window.innerWidth * 0.5;
     positionCounterRef.current = 0;
+    beatCounterRef.current = 0;
     scrollOffsetRef.current = 0;
+    setDrawCallback(drawNote);
   }, []);
 
   /*========================================*
    *       Draw note Keyboard Debugs        *
    *========================================*/
+  // useEffect(() => {
+  //   const handleKeyPress = (e: KeyboardEvent) => {
+  //     // Demo: use keyboard keys to simulate note input
+  //     // Treble staff scale: E4(64) to F5(77)
+  //     // Bass staff scale: G2(43) to A3(57)
+  //     const keyMap: {
+  //       [key: string]: { midi: number; staff: "treble" | "bass" };
+  //     } = {
+  //       // Treble clef - C major scale from C4 to C6
+  //       q: { midi: 72, staff: "treble" }, // C5
+  //       w: { midi: 74, staff: "treble" }, // D5
+  //       e: { midi: 76, staff: "treble" }, // E5
+  //       r: { midi: 77, staff: "treble" }, // F5
+  //       t: { midi: 79, staff: "treble" }, // G5
+  //       y: { midi: 81, staff: "treble" }, // A5
+  //       u: { midi: 83, staff: "treble" }, // B5
+  //       i: { midi: 84, staff: "treble" }, // C6
+
+  //       a: { midi: 60, staff: "treble" }, // C4 (middle C)
+  //       s: { midi: 62, staff: "treble" }, // D4
+  //       d: { midi: 64, staff: "treble" }, // E4
+  //       f: { midi: 65, staff: "treble" }, // F4
+  //       g: { midi: 67, staff: "treble" }, // G4
+  //       h: { midi: 69, staff: "treble" }, // A4
+  //       j: { midi: 71, staff: "treble" }, // B4
+
+  //       // Bass clef - lower notes
+  //       z: { midi: 48, staff: "bass" }, // C3
+  //       x: { midi: 50, staff: "bass" }, // D3
+  //       c: { midi: 52, staff: "bass" }, // E3
+  //       v: { midi: 53, staff: "bass" }, // F3
+  //       b: { midi: 55, staff: "bass" }, // G3
+  //       n: { midi: 57, staff: "bass" }, // A3
+  //       m: { midi: 59, staff: "bass" }, // B3
+  //     };
+
+  //     const noteInfo = keyMap[e.key.toLowerCase()];
+  //     if (noteInfo) {
+  //       const noteTypes: (2 | 4 | 8 | 16)[] = [2, 4, 4, 8, 8, 16];
+  //       const noteType =
+  //         noteTypes[Math.floor(Math.random() * noteTypes.length)];
+
+  //       // Current position, then advance by random [0, 1, 2, 3]
+  //       const position = positionCounterRef.current;
+  //       const advancement = Math.floor(Math.random() * 4);
+  //       positionCounterRef.current += advancement;
+
+  //       drawNote(noteInfo.midi, noteInfo.staff, false, position, noteType, bpm);
+  //     }
+
+  //     // Press 0 for rest
+  //     if (e.key === "0") {
+  //       const noteTypes: (4 | 8 | 16)[] = [4, 8, 16];
+  //       const noteType =
+  //         noteTypes[Math.floor(Math.random() * noteTypes.length)];
+
+  //       const position = positionCounterRef.current;
+  //       const advancement = Math.floor(Math.random() * 4);
+  //       positionCounterRef.current += advancement;
+
+  //       drawNote(0, "treble", false, position, noteType, bpm);
+  //     }
+
+  //     // Press Enter for new barline
+  //     if (e.key === "Enter") {
+  //       positionCounterRef.current = 0; // Reset for new measure
+  //       drawNote(67, "treble", true, 0, 8, bpm); // Note at position 0 in new measure
+  //     }
+  //   };
+
+  //   window.addEventListener("keypress", handleKeyPress);
+  //   return () => window.removeEventListener("keypress", handleKeyPress);
+  // }, [drawNote, bpm]);
+
+  /*========================================*
+   *    Real-time Scorification Debugs      *
+   *========================================*/
   useEffect(() => {
-    const handleKeyPress = (e: KeyboardEvent) => {
+    const handleScorifyKeyPress = (e: KeyboardEvent) => {
+      // console.debug("scorify button pressed.")
       // Demo: use keyboard keys to simulate note input
       // Treble staff scale: E4(64) to F5(77)
       // Bass staff scale: G2(43) to A3(57)
-      const keyMap: {
-        [key: string]: { midi: number; staff: "treble" | "bass" };
-      } = {
-        // Treble clef - C major scale from C4 to C6
-        q: { midi: 72, staff: "treble" }, // C5
-        w: { midi: 74, staff: "treble" }, // D5
-        e: { midi: 76, staff: "treble" }, // E5
-        r: { midi: 77, staff: "treble" }, // F5
-        t: { midi: 79, staff: "treble" }, // G5
-        y: { midi: 81, staff: "treble" }, // A5
-        u: { midi: 83, staff: "treble" }, // B5
-        i: { midi: 84, staff: "treble" }, // C6
+      // Use predefined sequence of performance & beat tracking results, fixed delta time.
 
-        a: { midi: 60, staff: "treble" }, // C4 (middle C)
-        s: { midi: 62, staff: "treble" }, // D4
-        d: { midi: 64, staff: "treble" }, // E4
-        f: { midi: 65, staff: "treble" }, // F4
-        g: { midi: 67, staff: "treble" }, // G4
-        h: { midi: 69, staff: "treble" }, // A4
-        j: { midi: 71, staff: "treble" }, // B4
-
-        // Bass clef - lower notes
-        z: { midi: 48, staff: "bass" }, // C3
-        x: { midi: 50, staff: "bass" }, // D3
-        c: { midi: 52, staff: "bass" }, // E3
-        v: { midi: 53, staff: "bass" }, // F3
-        b: { midi: 55, staff: "bass" }, // G3
-        n: { midi: 57, staff: "bass" }, // A3
-        m: { midi: 59, staff: "bass" }, // B3
-      };
-
-      const noteInfo = keyMap[e.key.toLowerCase()];
-      if (noteInfo) {
-        const noteTypes: (2 | 4 | 8 | 16)[] = [2, 4, 4, 8, 8, 16];
-        const noteType =
-          noteTypes[Math.floor(Math.random() * noteTypes.length)];
-
-        // Current position, then advance by random [0, 1, 2, 3]
-        const position = positionCounterRef.current;
-        const advancement = Math.floor(Math.random() * 4);
-        positionCounterRef.current += advancement;
-
-        drawNote(noteInfo.midi, noteInfo.staff, false, position, noteType, bpm);
+      // Current position
+      const position = positionCounterRef.current;
+      const beatPos = beatCounterRef.current;
+      const isBeat = BEAT_TYPE_PRESET[position];
+      const note: NoteEvent = PERF_PRESET[position];
+      const beat: BeatEvent = BEAT_PRESET[beatPos];
+      addNote(note.midi, note.staff, note.timestamp);
+      if (isBeat) {
+        addBeat(beat.timestamp, beat.isDownbeat);
+        drawBuffedNotes();
       }
-
-      // Press 0 for rest
-      if (e.key === "0") {
-        const noteTypes: (4 | 8 | 16)[] = [4, 8, 16];
-        const noteType =
-          noteTypes[Math.floor(Math.random() * noteTypes.length)];
-
-        const position = positionCounterRef.current;
-        const advancement = Math.floor(Math.random() * 4);
-        positionCounterRef.current += advancement;
-
-        drawNote(0, "treble", false, position, noteType, bpm);
-      }
-
-      // Press Enter for new barline
-      if (e.key === "Enter") {
-        positionCounterRef.current = 0; // Reset for new measure
-        drawNote(67, "treble", true, 0, 8, bpm); // Note at position 0 in new measure
+      positionCounterRef.current += 1;
+      if (isBeat) {
+        beatCounterRef.current += 1;
       }
     };
 
-    window.addEventListener("keypress", handleKeyPress);
-    return () => window.removeEventListener("keypress", handleKeyPress);
+    window.addEventListener("keypress", handleScorifyKeyPress);
+    return () => window.removeEventListener("keypress", handleScorifyKeyPress);
   }, [drawNote, bpm]);
 
+  function computeTatum(level: number, timeSignature: number[] = [4, 4]) {
+    /*
+    - param level: min beat level, 4 for quarter note etc.
+      - e.g. at 4/4, 16th notes: tatum is 4 (4*4), 8th notes: tatum is 2 (2*4), quarter: tatum is 1
+    */
+    const nbeat = timeSignature[0];
+    const beatType = timeSignature[1];
+
+    // TODO: compute tatum based on time signature
+    return Math.round(level / 4);
+  }
   /*========================================*
    *           Begin Components             *
    *========================================*/
@@ -478,6 +552,7 @@ export default function App() {
           minBeatLevel={minBeatLevel}
           onMinBeatLevelChange={(level) => {
             setMinBeatLevel(level);
+            updateTatum(computeTatum(level)); // TODO Tatum should change according to time signature & min beat level. for now just assume 4/4
             // Reset positioning when min beat level changes
             handleClear();
           }}

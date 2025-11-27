@@ -119,7 +119,7 @@ export const useMIDI = (): UseMIDIReturn => {
 
     // Cleanup on unmount
     useEffect(() => {
-        console.log("DEBUG MIDI disconnect")
+        console.debug("MIDI disconnect")
         return () => {
             disconnect();
         };
