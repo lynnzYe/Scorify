@@ -81,7 +81,7 @@ export interface BeatEvent {
 // Config
 const GROUP_WINDOW_MS = 250;
 let defaultTatum = 2; // min beat level
-const MAX_TEMPO_JUMP = 2; // heuristic: no jump > 2×
+const MAX_TEMPO_JUMP = 1.5; // heuristic: no jump > 2×
 const ON_BEAT_TOLERANCE_MS = 50 // to determine whether current note is at the same timestamp as beat's (should be equal)
 
 // BPM tracking
@@ -144,7 +144,7 @@ export function drawBuffedNotes() {
     // Step 4: process all pending notes BEFORE this beat
     const notesToDraw = [...pendingNotes];
     const tatumSize = smoothedInterval / defaultTatum;
-    console.debug("=======tatum size:", defaultTatum, 'smoothed interval:', smoothedInterval, 'beattime:', beatTime, '========')
+    console.debug("=======tatum size:", defaultTatum, 'smoothed interval:', smoothedInterval, 'beattime:', beatTime, 'virtual beat:', virtualBeats)
 
     // Step 5: loop and draw all notes
     let latestTatumIdx = 0
@@ -279,20 +279,21 @@ function updateBPM(currentBeatTime: number) {
         smoothedInterval = smoothedInterval
     } else {
         // exponential smoothing
-        smoothedInterval = smoothedInterval * 0.7 + observed * 0.3;
+        smoothedInterval = smoothedInterval * 0.8 + observed * 0.2;
     }
 }
 
 function getVirtualBeats(currentBeatTime: number): number {
-    if (!lastBeatTimestamp) return 0;
+    if (lastBeatTimestamp == null) return 0;
 
     const observed = currentBeatTime - lastBeatTimestamp;
     const expected = smoothedInterval;
-
+    console.debug("Cal virtual beat, observed:", observed, 'expected', expected)
     if (observed < expected * MAX_TEMPO_JUMP) return 0; // twice as slow
 
     // Estimate missing beats
     const n = Math.round(observed / expected) - 1;
+    console.debug("predicted", n, 'virtual beat')
     return Math.max(0, n);
 }
 
@@ -331,15 +332,15 @@ export const PERF_PRESET: NoteEvent[] = [
     { midi: 76, staff: 'treble', timestamp: 6000 },
 ];
 export const BEAT_TYPE_PRESET: boolean[] = [
-    true, true, true, true, true, true, false, true, true, false, true, true, true, true, true, true
+    true, true, false, false, false, false, false, true, true, false, true, true, true, true, true, true
 ]
 export const BEAT_PRESET: BeatEvent[] = [
     { timestamp: 0, isDownbeat: true },
     { timestamp: 0, isDownbeat: true },
-    { timestamp: 1000, isDownbeat: false },
-    { timestamp: 1000, isDownbeat: false },
-    { timestamp: 2000, isDownbeat: false },
-    { timestamp: 2000, isDownbeat: false },
+    // { timestamp: 1000, isDownbeat: false },
+    // { timestamp: 1000, isDownbeat: false },
+    // { timestamp: 2000, isDownbeat: false },
+    // { timestamp: 2000, isDownbeat: false },
     { timestamp: 3000, isDownbeat: false },
     { timestamp: 3000, isDownbeat: false },
     { timestamp: 4000, isDownbeat: true },
