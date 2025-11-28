@@ -129,6 +129,10 @@ export function drawBuffedNotes() {
     //     console.warn("drawNote not available");
     //     return;
     // }
+    if (!(window as any).drawNote) {
+        console.error("Scorify draw note not initialized")
+        return
+    }
     // Check consecutive beat labels any problems.
 
     // Step 1: compute the true beat time for the latest group
@@ -150,7 +154,7 @@ export function drawBuffedNotes() {
     let latestTatumIdx = 0
     for (const note of notesToDraw) {
         // draw |---n1--n3--n5---(n8n9|)
-        const delta = note.timestamp - lastBeatTimestamp!; // distance between two beats |----|
+        let delta = lastBeatTimestamp === null ? 0 : note.timestamp - lastBeatTimestamp;
         let index = Math.round(delta / tatumSize); // Quantize to tatum position 
         if (index < 0) index = 0;
 
@@ -160,7 +164,8 @@ export function drawBuffedNotes() {
         - So, total number of beats between last beat = (whether new beat) + virtualBeats
         - Additionally, 
         */
-        let beatsToPrev = 1, isDownbeat = latestGroup[0].isDownbeat && Math.abs(note.timestamp - beatTime) < ON_BEAT_TOLERANCE_MS
+        let beatsToPrev = 1
+        let isDownbeat = isFirstBeat || (latestGroup[0].isDownbeat && Math.abs(note.timestamp - beatTime) < ON_BEAT_TOLERANCE_MS)
         // Case 2 (or when previous note is on beat, current also)
         if (latestGroup.length > 0 && Math.abs(delta) < ON_BEAT_TOLERANCE_MS) {
             console.debug("found more note on beat, time:", note.timestamp)
@@ -174,6 +179,9 @@ export function drawBuffedNotes() {
         const tatumsBetween = beatsBetween * defaultTatum;
         if (index > tatumsBetween) index = tatumsBetween;
         if (isDownbeat) { currentMeasureTatumIndex = 0; index = 0; } // start a new measure from 0 position
+
+        // Empirical limit on index: no more than 1 measures of rest. 
+        index = Math.min(defaultTatum * 4, index)
 
         let positionInMeasure = currentMeasureTatumIndex + index;
 
@@ -216,6 +224,8 @@ export type DrawNoteFn = (
 // -------------------------------
 let pendingNotes: NoteEvent[] = [];
 let beatGroups: BeatEvent[][] = [];
+
+let flushScheduled = false;
 
 let currentMeasureTatumIndex = 0; // Keep track of cumulative tatum index in a measure
 
@@ -279,7 +289,7 @@ function updateBPM(currentBeatTime: number) {
         smoothedInterval = smoothedInterval
     } else {
         // exponential smoothing
-        smoothedInterval = smoothedInterval * 0.8 + observed * 0.2;
+        smoothedInterval = smoothedInterval * 0.7 + observed * 0.3;
     }
 }
 

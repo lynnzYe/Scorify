@@ -23,8 +23,12 @@ import {
   PERF_PRESET,
   resetScorify,
   setDrawCallback,
+  Staff,
   updateTatum,
 } from "./utils/scorify";
+import { BEAT_THRES, DOWNBEAT_THRES } from "./model/beat-tracker";
+
+const NDEBUG = true;
 
 export default function App() {
   const [notes, setNotes] = useState<Note[]>([]);
@@ -34,6 +38,7 @@ export default function App() {
   const [keySignature, setKeySignature] = useState<KeySignature>(
     KEY_SIGNATURES[0]
   );
+  const userBeatOverrideRef = useRef(false);
 
   const midi = useMIDI();
   const sound = useSoundFont();
@@ -95,7 +100,7 @@ export default function App() {
     updateTatum(computeTatum(minBeatLevel));
   }, []);
 
-  function trackBeat(pitch: number, velocity: number) {
+  function trackBeat(pitch: number, velocity: number, dbHint: boolean = false) {
     const timeMs = performance.now();
     if (!mbtRef.current) {
       return [0, 0];
@@ -103,7 +108,8 @@ export default function App() {
     let [beatProbTensor, downbeatProbTensor] = mbtRef.current.track(
       timeMs / 1000,
       pitch,
-      velocity
+      velocity,
+      dbHint
     );
     const beatProb = beatProbTensor.dataSync()[0];
     const downbeatProb = downbeatProbTensor.dataSync()[0];
@@ -115,7 +121,7 @@ export default function App() {
     const last = lastTimeMsRef.current;
     let dt = last ? ((timeMs - last) / 1000).toFixed(3) : 0;
     const latencyMs = performance.now() - timeMs;
-    console.log(
+    console.info(
       `⌚ ${dt}s, 🔘 ${pitch} beat=${beatProb.toFixed(
         3
       )} downbeat=${downbeatProb.toFixed(3)} (latency ${latencyMs.toFixed(
@@ -143,50 +149,94 @@ export default function App() {
     toast.info("MIDI device disconnected");
   }, [midi]);
 
+  function determineStaff(midi: number): Staff {
+    if (midi < 60) {
+      return "bass";
+    }
+    return "treble";
+  }
+
+  const onDrawBuffedNotes = useCallback(() => {
+    drawBuffedNotes();
+  }, [drawBuffedNotes]);
+  const onAddNote = useCallback(
+    (pitch: number, staff: Staff, timestamp: number) => {
+      addNote(pitch, staff, timestamp);
+    },
+    [addNote]
+  );
+  const onAddBeat = useCallback(
+    (timestamp: number, isDownbeat: boolean) => {
+      addBeat(timestamp, isDownbeat);
+    },
+    [addBeat]
+  );
   // Setup MIDI event handlers
   useEffect(() => {
-    console.debug("Midi connected?", midi.isConnected);
     if (!midi.isConnected) return;
+    midi.onController((event) => {
+      // Foot tap overrides downbeat
+      /// ======== TODO +++++++++++++
+      // Check foot pedal value!
+      console.debug("FOot peDal event:", event);
 
-    // Handle MIDI note on (pass in callback)
-    midi.onNoteOn((event) => {
-      console.debug("Detected midi note on event");
-      const { pitch, velocity } = event;
-      const [beat_prob, downbeat_prob] = trackBeat(pitch, velocity);
-      // Play sound
-      if (sound.isLoaded) {
-        sound.playNote(pitch, velocity);
-      }
-      // If beat / downbeat && play beats.
-      console.log("DEBUG", "metstatus", metronomeStatus);
-      if (metronomeStatus && audioContextRef.current) {
-        if (beat_prob > 0.4) {
-          clickMetronome(audioContextRef.current, 500);
-        }
-        if (downbeat_prob > 0.5) {
+      if (event.controller === 64 && event.value > 0) {
+        userBeatOverrideRef.current = true;
+        if (metronomeStatus && audioContextRef.current) {
           clickMetronome(audioContextRef.current, 1000);
         }
       }
+    });
+    midi.onNoteOn((event) => {
+      if (!audioContextRef.current) return;
 
-      // Highlight key
+      const timestamp = audioContextRef.current.currentTime * 1000;
+      const { pitch, velocity } = event;
+      const [beat_prob, downbeat_prob] = trackBeat(
+        pitch,
+        velocity,
+        userBeatOverrideRef.current // override if user provides a foot tap downbeat hint.
+      );
+      userBeatOverrideRef.current = false; // consume previous hint.
+
+      if (sound.isLoaded) sound.playNote(pitch, velocity);
+
+      onAddNote(pitch, determineStaff(pitch), timestamp);
+
+      if (beat_prob > BEAT_THRES) {
+        onAddBeat(timestamp, downbeat_prob > DOWNBEAT_THRES);
+        setTimeout(() => {
+          onDrawBuffedNotes();
+        }, 0.01);
+
+        if (metronomeStatus) {
+          clickMetronome(
+            audioContextRef.current,
+            downbeat_prob > DOWNBEAT_THRES ? 1000 : 500
+          );
+        }
+      }
+
       setPressedKeys((prev) => new Set([...prev, pitch]));
     });
 
-    // Handle MIDI note off
     midi.onNoteOff((event) => {
       const { pitch } = event;
-      // Stop sound
-      if (sound.isLoaded) {
-        sound.stopNote(pitch);
-      }
-      // Remove highlighed key
+      if (sound.isLoaded) sound.stopNote(pitch);
+
       setPressedKeys((prev) => {
         const updated = new Set(prev);
         updated.delete(pitch);
         return updated;
       });
     });
-  }, [midi.isConnected, sound.isLoaded]);
+  }, [
+    midi.isConnected,
+    sound.isLoaded,
+    // onAddNote,
+    onAddBeat,
+    onDrawBuffedNotes,
+  ]);
 
   // Show loading status for soundfont
   useEffect(() => {
@@ -198,10 +248,6 @@ export default function App() {
   /*========================================*
    *    Real-time Score Visualization       *
    *========================================*/
-
-  // Fixed measure width (in position units) - standard 4/4 measure with 16th notes = 16 positions
-  const POSITIONS_PER_MEASURE = 16;
-
   // Calculate spacing between positions (not notes)
   const calculatePositionSpacing = useCallback((minBeat: number): number => {
     const BASE_UNIT = 15; // Minimum distance
@@ -387,6 +433,7 @@ export default function App() {
     positionCounterRef.current = 0;
     beatCounterRef.current = 0;
     scrollOffsetRef.current = 0;
+    mbtRef.current?.reset();
     setDrawCallback(drawNote);
   }, []);
 
@@ -395,6 +442,9 @@ export default function App() {
    *========================================*/
   // useEffect(() => {
   //   const handleKeyPress = (e: KeyboardEvent) => {
+  //     if (NDEBUG) {
+  //       return;
+  //     }
   //     // Demo: use keyboard keys to simulate note input
   //     // Treble staff scale: E4(64) to F5(77)
   //     // Bass staff scale: G2(43) to A3(57)
@@ -472,6 +522,9 @@ export default function App() {
    *========================================*/
   useEffect(() => {
     const handleScorifyKeyPress = (e: KeyboardEvent) => {
+      if (NDEBUG) {
+        return;
+      }
       // console.debug("scorify button pressed.")
       // Demo: use keyboard keys to simulate note input
       // Treble staff scale: E4(64) to F5(77)
@@ -539,7 +592,7 @@ export default function App() {
           <h1
             style={{ fontSize: "3rem", fontWeight: "bold", color: "#143f7bff" }}
           >
-            Real-Time Piano Score Transcription
+            Real-Time "Scorification"
           </h1>
           <p className="text-gray-600 text-sm">
             Demo: Q-I (upper), A-J (lower), Z-M (bass), 0 (rest), Enter (new

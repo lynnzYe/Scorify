@@ -62,7 +62,7 @@ export const useSoundFont = (instrument: InstrumentName = 'acoustic_grand_piano'
         const note = instrumentRef.current.play(midiPitch, undefined, { gain });
         activeNotesRef.current.set(midiPitch, note);
 
-        console.log("DEBUG: played note", midiPitch, velocity)
+        console.debug("DEBUG: played note", midiPitch, velocity)
     }, []);
 
     // Stop a note

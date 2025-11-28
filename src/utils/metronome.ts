@@ -13,7 +13,7 @@ export function clickMetronome(
     metronomeOsc.connect(gainNode).connect(audioContext.destination);
 
     // short click
-    console.log("DEBUG: synthesize metronome")
+    // console.debug("DEBUG: synthesize metronome")
     metronomeOsc.start();
     metronomeOsc.stop(audioContext.currentTime + 0.05); // 50ms
 }
