@@ -57,7 +57,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
         </Select>
       </div>
 
-      <div className="flex items-center gap-2">
+      {/* <div className="flex items-center gap-2">
         <label className="text-sm">Key Signature:</label>
         <Select
           value={keySignature.name}
@@ -77,7 +77,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
             ))}
           </SelectContent>
         </Select>
-      </div>
+      </div> */}
 
       <Button onClick={onClear} variant="destructive">
         Clear Score

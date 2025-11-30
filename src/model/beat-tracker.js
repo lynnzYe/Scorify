@@ -1,3 +1,6 @@
+export const BEAT_THRES = 0.4;
+export const DOWNBEAT_THRES = 0.5;
+
 (function (tf, my) {
   class BeatTracker {
     constructor() {
@@ -36,7 +39,7 @@
       this.dec.dispose();
     }
 
-    track(time, pitch, velocity) {
+    track(time, pitch, velocity, dbHint = false) {
       // Check inputs
       velocity = velocity === undefined ? 64 : velocity;
       let deltaTime = this.lastTime === null ? 1e6 : time - this.lastTime;
@@ -51,6 +54,11 @@
       const log1pDeltaTime = Math.log1p(deltaTime);
       // Run model
       const prevHidden = this.lastHidden;
+      if (dbHint) {
+        console.log("*** db hinted***");
+        this.lastBeatPred = true;
+        this.lastDownbeatPred = true;
+      }
       const [beat_prob, downbeat_prob, hidden] = tf.tidy(() => {
         // Pitch within 88 classes
         let feat = tf.tensor(
@@ -76,6 +84,8 @@
       if (prevHidden !== null) prevHidden.dispose();
       this.lastTime = time;
       this.lastHidden = hidden;
+      this.lastBeatPred = beat_prob > BEAT_THRES;
+      this.lastDownbeatPred = downbeat_prob > DOWNBEAT_THRES;
       return [beat_prob, downbeat_prob];
     }
   }

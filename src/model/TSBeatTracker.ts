@@ -11,8 +11,13 @@ class BeatTrackerWrapper {
     async load() { await this.tracker.init(); }
     predict(data: Float32Array) { return this.tracker.predict(data); }
 
-    track(time: number, pitch: number, velocity: number): [tf.Tensor, tf.Tensor] {
-        return this.tracker.track(time, pitch, velocity)
+    track(time: number, pitch: number, velocity: number, dbHint: boolean = false): [tf.Tensor, tf.Tensor] {
+        return this.tracker.track(time, pitch, velocity, dbHint)
+    }
+
+    reset() {
+        console.info("reset LSTM beat tracker")
+        this.tracker.reset()
     }
 }
 

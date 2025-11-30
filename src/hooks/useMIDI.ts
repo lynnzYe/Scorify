@@ -5,13 +5,19 @@ export interface MIDINoteEvent {
     velocity: number;
 }
 
+export interface MIDIControllerEvent {
+    controller: number;
+    value: number;
+}
+
 interface UseMIDIReturn {
     isConnected: boolean;
     isSupported: boolean;
-    connect: () => Promise<void>;
+    connect: () => Promise<string | null>;
     disconnect: () => void;
-    onNoteOn: (callback: (event: MIDINoteEvent) => void) => void;
-    onNoteOff: (callback: (event: MIDINoteEvent) => void) => void;
+    onNoteOn: (callback: (event: MIDINoteEvent) => void) => () => void;
+    onNoteOff: (callback: (event: MIDINoteEvent) => void) => () => void;
+    onController: (callback: (event: MIDIControllerEvent) => void) => () => void; // <-- new
     error: string | null;
 }
 
@@ -23,6 +29,7 @@ export const useMIDI = (): UseMIDIReturn => {
 
     const noteOnCallbacksRef = useRef<((event: MIDINoteEvent) => void)[]>([]);
     const noteOffCallbacksRef = useRef<((event: MIDINoteEvent) => void)[]>([]);
+    const controllerCallbacksRef = useRef<((event: { controller: number, value: number }) => void)[]>([]);
 
     // Check MIDI support
     useEffect(() => {
@@ -35,42 +42,74 @@ export const useMIDI = (): UseMIDIReturn => {
             console.log("Empty MIDI Message!")
             return
         }
-        const [status, pitch, velocity] = message.data;
+        const [status, data1, data2] = message.data;
 
         const command = status & 0xf0;
 
         // Note On (0x90) with velocity > 0
-        if (command === 0x90 && velocity > 0) {
+        if (command === 0x90 && data2 > 0) {
             noteOnCallbacksRef.current.forEach(callback => {
-                callback({ pitch, velocity });
+                callback({ pitch: data1, velocity: data2 });
             });
         }
         // Note Off (0x80) or Note On with velocity 0
-        else if (command === 0x80 || (command === 0x90 && velocity === 0)) {
+        else if (command === 0x80 || (command === 0x90 && data2 === 0)) {
             noteOffCallbacksRef.current.forEach(callback => {
-                callback({ pitch, velocity: 0 });
+                callback({ pitch: data1, velocity: 0 });
             });
+        }
+        // Control Change (0xB0)
+        else if (command === 0xB0) {
+            controllerCallbacksRef.current.forEach(cb => cb({ controller: data1, value: data2 }));
         }
     }, []);
 
     // Connect to MIDI
     const connect = useCallback(async () => {
         if (!navigator.requestMIDIAccess) {
-            setError('Web MIDI API is not supported in this browser');
-            return;
+            const err = 'Web MIDI API is not supported in this browser'
+            setError(err);
+            return err;
         }
 
         try {
             setError(null);
-            const access = await navigator.requestMIDIAccess();
+            const access = await navigator.requestMIDIAccess({ sysex: false });
             setMidiAccess(access);
-            console.log("DEBUG: Set midi connected to true")
-            setIsConnected(true);
 
-            // Listen to all MIDI inputs
+            const updateConnectionState = () => {
+                console.log("MIDI inputs:", Array.from(access.inputs.values()), 'size:', access.inputs.size)
+                let hasPhysicalDevice = Array.from(access.inputs.values()).some(input =>
+                    input.state === "connected" &&
+                    // input.connection === "open" && 
+                    input.manufacturer !== ""
+                );
+                console.log("Has physical device?:", hasPhysicalDevice)
+                access.onstatechange = (e) => {
+                    console.debug("Port updated:", e.port?.name, e.port?.connection);
+                    hasPhysicalDevice = Array.from(access.inputs.values()).some(input =>
+                        input.state === "connected" &&
+                        input.connection === "open" &&
+                        input.manufacturer !== ""
+                    );
+                    return true
+                };
+                if (access.inputs.size == 1 && Array.from(access.inputs.values())[0].name?.includes("IAC")) {
+                    console.warn("Only IAC bus is found.")
+                }
+                if (!hasPhysicalDevice) {
+                    return false
+                }
+                return true
+            };
+
+            // Attach listeners to existing devices
             access.inputs.forEach((input) => {
                 input.onmidimessage = handleMIDIMessage;
             });
+
+            // Update connected state now
+            updateConnectionState();
 
             // Handle device connections/disconnections
             access.onstatechange = (event) => {
@@ -79,18 +118,24 @@ export const useMIDI = (): UseMIDIReturn => {
                     if (port.state === 'connected') {
                         port.onmidimessage = handleMIDIMessage;
                     }
+                    updateConnectionState();
                 }
             };
+            console.debug("DEBUG: Set midi connected to true")
+            setIsConnected(true);
+            return null
         } catch (err) {
-            setError('Failed to access MIDI devices. Permission denied or no devices found.');
+            const errr = 'Failed to access MIDI devices. Permission denied or no devices found.';
+            setError(errr);
             setIsConnected(false);
-            console.error('MIDI connection error:', err);
+            console.error('MIDI connection error:', errr);
+            return errr
         }
     }, [handleMIDIMessage]);
 
     // Disconnect from MIDI
     const disconnect = useCallback(() => {
-        console.log("DEBUG: disconnect MIDI")
+        console.debug("DEBUG: disconnect MIDI")
         if (midiAccess) {
             midiAccess.inputs.forEach((input) => {
                 input.onmidimessage = null;
@@ -117,9 +162,20 @@ export const useMIDI = (): UseMIDIReturn => {
         };
     }, []);
 
+    const onController = useCallback(
+        (callback: (event: { controller: number, value: number }) => void) => {
+            controllerCallbacksRef.current.push(callback);
+            return () => {
+                controllerCallbacksRef.current = controllerCallbacksRef.current.filter(cb => cb !== callback);
+            };
+        },
+        []
+    );
+
+
     // Cleanup on unmount
     useEffect(() => {
-        console.log("DEBUG MIDI disconnect")
+        console.debug("MIDI disconnect")
         return () => {
             disconnect();
         };
@@ -132,6 +188,7 @@ export const useMIDI = (): UseMIDIReturn => {
         disconnect,
         onNoteOn,
         onNoteOff,
+        onController,
         error,
     };
 };
