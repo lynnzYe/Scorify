@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef } from "react";
 import { ScoreDisplay } from "./components/ScoreDisplay";
 import { PianoKeyboard } from "./components/PianoKeyboard";
+import { HandSeparator } from "./utils/handSeparator"; // Import the new utility
 import { ControlPanel } from "./components/ControlPanel";
 import { Note, MinBeatLevel, KeySignature } from "./types/music";
 import { KEY_SIGNATURES } from "./utils/musicNotation";
@@ -15,22 +16,16 @@ import { clickMetronome } from "./utils/metronome";
 import {
   addBeat,
   addNote,
-  BEAT_PRESET,
-  BEAT_TYPE_PRESET,
-  BeatEvent,
-  drawBuffedNotes,
-  NoteEvent,
-  PERF_PRESET,
   resetScorify,
   setDrawCallback,
   Staff,
   updateTatum,
+  drawBuffedNotes,
 } from "./utils/scorify";
 import { BEAT_THRES, DOWNBEAT_THRES } from "./model/beat-tracker";
 
 const NDEBUG = true;
 
-// Helper to calculate constant spacing
 const BASE_UNIT = 15;
 const calculatePositionSpacing = (minBeat: number): number => {
   return (16 / minBeat) * BASE_UNIT;
@@ -38,7 +33,6 @@ const calculatePositionSpacing = (minBeat: number): number => {
 
 export default function App() {
   const [notes, setNotes] = useState<Note[]>([]);
-
   const [pressedKeys, setPressedKeys] = useState<Set<number>>(new Set());
   const [bpm, setBpm] = useState<number>(120);
   const [minBeatLevel, setMinBeatLevel] = useState<MinBeatLevel>(16);
@@ -49,25 +43,22 @@ export default function App() {
 
   const midi = useMIDI();
   const sound = useSoundFont();
+  const handSeparatorRef = useRef(new HandSeparator());
 
-  // --- SYNCHRONOUS LAYOUT STATE ---
-  // We use this Ref to track layout immediately, bypassing React render cycles
+  // SYNCHRONOUS LAYOUT STATE
+  // Critical for atomic bar updates
   const layoutStateRef = useRef({
     currentMeasureIndex: 0,
-    measureStartAbsoluteX: window.innerWidth * 0.5, // Start somewhat in middle
-    absoluteHeadX: window.innerWidth * 0.5, // The furthest right point drawn so far
-    currentMeasureNotes: [] as { position: number; duration: number }[], // Shadow copy for barline calc
+    measureStartAbsoluteX: window.innerWidth * 0.5,
+    absoluteHeadX: window.innerWidth * 0.5,
+    currentMeasureNotes: [] as { position: number; duration: number }[],
   });
 
-  /*=============================*
-   *     Load Beat Tracker       *
-   *=============================*/
   const [loadingMBT, setLoadingMBT] = useState(true);
   const [status, setStatus] = useState("Initializing model...");
   const mbtRef = React.useRef<BeatTrackerWrapper | null>(null);
   const [error, setError] = useState(false);
   const [metronomeStatus, setMetronomeStatus] = useState(false);
-  const lastTimeMsRef = useRef(0);
   const audioContextRef = useRef<AudioContext | null>(null);
 
   function handleMetronomeToggle() {
@@ -75,26 +66,19 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (!audioContextRef.current) {
-      audioContextRef.current = new AudioContext();
-    }
+    if (!audioContextRef.current) audioContextRef.current = new AudioContext();
     async function initMBT() {
       if (!window.my || !window.my.testBeatSS || !window.my.BeatTracker) {
-        console.log("ERROR: cannot find window.my (...)");
         setError(true);
         return;
       }
-
       setStatus("Running model self-test...");
       if (!window._midiTestRan) {
         window._midiTestRan = true;
         await window.my.testBeatSS();
-        setStatus("Loading Beat Tracker...");
       }
-
       mbtRef.current = new BeatTrackerWrapper();
       await mbtRef.current.load();
-
       setStatus("Ready!");
       setLoadingMBT(false);
     }
@@ -103,12 +87,9 @@ export default function App() {
     updateTatum(computeTatum(minBeatLevel));
   }, []);
 
-  // ... [Keep trackBeat, handleMidiConnect, handleMidiDisconnect, determineStaff] ...
-
   function trackBeat(pitch: number, velocity: number, dbHint: boolean = false) {
-    const timeMs = performance.now();
     if (!mbtRef.current) return [0, 0];
-
+    const timeMs = performance.now();
     let [beatProbTensor, downbeatProbTensor] = mbtRef.current.track(
       timeMs / 1000,
       pitch,
@@ -117,10 +98,8 @@ export default function App() {
     );
     const beatProb = beatProbTensor.dataSync()[0];
     const downbeatProb = downbeatProbTensor.dataSync()[0];
-
     beatProbTensor.dispose();
     downbeatProbTensor.dispose();
-    lastTimeMsRef.current = timeMs;
     return [beatProb, downbeatProb];
   }
 
@@ -136,46 +115,24 @@ export default function App() {
   }, [midi]);
 
   function determineStaff(midi: number): Staff {
+    // We use the competitive learning HandSeparator now.
     return midi < 60 ? "bass" : "treble";
   }
 
-  // Wrappers to avoid dependency cycles in useEffect
-  const onAddNote = useCallback(
-    (pitch: number, staff: Staff, timestamp: number) => {
-      addNote(pitch, staff, timestamp);
-    },
-    []
-  );
-  const onAddBeat = useCallback((timestamp: number, isDownbeat: boolean) => {
-    addBeat(timestamp, isDownbeat);
-  }, []);
-  const onDrawBuffedNotes = useCallback(() => {
-    drawBuffedNotes();
-  }, []);
-
-  // MIDI Event Handlers
   const soundRef = useRef(sound);
   const metronomeStatusRef = useRef(metronomeStatus);
-  const onAddNoteRef = useRef(onAddNote);
-  const onAddBeatRef = useRef(onAddBeat);
-  const onDrawBuffedNotesRef = useRef(onDrawBuffedNotes);
-  const determineStaffRef = useRef(determineStaff);
+  const onAddNoteRef = useRef((p: number, s: Staff, t: number) =>
+    addNote(p, s, t)
+  );
+  const onAddBeatRef = useRef((t: number, d: boolean) => addBeat(t, d));
+  const onDrawBuffedNotesRef = useRef(() => drawBuffedNotes());
+  // const determineStaffRef = useRef(determineStaff);
 
   useEffect(() => {
     soundRef.current = sound;
     metronomeStatusRef.current = metronomeStatus;
-    onAddNoteRef.current = onAddNote;
-    onAddBeatRef.current = onAddBeat;
-    onDrawBuffedNotesRef.current = onDrawBuffedNotes;
-    determineStaffRef.current = determineStaff;
-  }, [
-    sound,
-    onAddNote,
-    onAddBeat,
-    onDrawBuffedNotes,
-    determineStaff,
-    metronomeStatus,
-  ]);
+    // determineStaffRef.current = determineStaff;
+  }, [sound, metronomeStatus]);
 
   const handleController = useCallback((event: MIDIControllerEvent) => {
     if (event.controller === 64 && event.value > 0) {
@@ -198,17 +155,15 @@ export default function App() {
     );
     userBeatOverrideRef.current = false;
 
-    if (soundRef.current.isLoaded) {
-      soundRef.current.playNote(pitch, velocity);
-    }
+    if (soundRef.current.isLoaded) soundRef.current.playNote(pitch, velocity);
 
-    onAddNoteRef.current(pitch, determineStaffRef.current(pitch), timestamp);
+    // 4. USE THE SEPARATOR HERE
+    const staff = handSeparatorRef.current.classify(pitch);
+    onAddNoteRef.current(pitch, staff, timestamp);
 
     if (beat_prob > BEAT_THRES) {
       onAddBeatRef.current(timestamp, downbeat_prob > DOWNBEAT_THRES);
-      // Run mostly immediately
       setTimeout(() => onDrawBuffedNotesRef.current(), 0);
-
       if (metronomeStatusRef.current) {
         clickMetronome(
           audioContextRef.current,
@@ -220,11 +175,10 @@ export default function App() {
   }, []);
 
   const handleNoteOff = useCallback((event: MIDINoteEvent) => {
-    const { pitch } = event;
-    if (soundRef.current.isLoaded) soundRef.current.stopNote(pitch);
+    if (soundRef.current.isLoaded) soundRef.current.stopNote(event.pitch);
     setPressedKeys((prev) => {
       const updated = new Set(prev);
-      updated.delete(pitch);
+      updated.delete(event.pitch);
       return updated;
     });
   }, []);
@@ -241,15 +195,7 @@ export default function App() {
     };
   }, [midi.isConnected]);
 
-  // Show loading status
-  useEffect(() => {
-    if (sound.isLoaded) toast.success("Piano sounds loaded!");
-  }, [sound.isLoaded]);
-
-  /*========================================*
-   *    Real-time Score Visualization       *
-   *========================================*/
-
+  // Layout Logic
   const drawNote = useCallback(
     (
       midiPitch: number,
@@ -260,22 +206,17 @@ export default function App() {
       currentBpm?: number | null,
       color: "black" | "blue" = "black"
     ) => {
-      // 1. Enforce minBeatLevel constraints
-      const drawPitch = midiPitch - 12; // visual adjustment
-      if (noteType > minBeatLevel) {
-        noteType = minBeatLevel as any;
-      }
-
+      const drawPitch = midiPitch - 12;
       const positionSpacing = calculatePositionSpacing(minBeatLevel);
       const layout = layoutStateRef.current;
-
       let barlineX: number | undefined;
 
-      // 2. Handle Bar Logic synchronously using LayoutRef
+      // ATOMIC BAR UPDATE
+      // If newBar is requested, we calculate the bar line relative to the PREVIOUS measure contents
       if (newBar) {
-        // Calculate where previous measure ended based on contents
         let barlineRelativePos = 0;
 
+        // Find furthest point of previous measure
         if (layout.currentMeasureNotes.length > 0) {
           const lastPosition = Math.max(
             ...layout.currentMeasureNotes.map((n) => n.position)
@@ -283,44 +224,40 @@ export default function App() {
           const notesAtLastPos = layout.currentMeasureNotes.filter(
             (n) => n.position === lastPosition
           );
-
-          // Calculate duration in terms of grid positions
+          // Default spacing unit is 1. If note is duration N, width is roughly N?
+          // Simplified: give it some padding based on minBeatLevel.
+          // noteType 4 (quarter) in minBeat 16 = 4 units.
           const positionDurations = notesAtLastPos.map(
             (n) => minBeatLevel / n.duration
           );
           const maxDuration = Math.max(...positionDurations);
-          barlineRelativePos = lastPosition + maxDuration;
+          barlineRelativePos = lastPosition + Math.max(maxDuration, 1);
         }
 
-        // Calculate Absolute X for barline
         const absoluteBarlineX =
           layout.measureStartAbsoluteX +
           barlineRelativePos * positionSpacing +
-          30; // 30px padding
+          40; // 40px padding
         barlineX = absoluteBarlineX;
 
-        // Reset Layout for new measure
+        // Commit new measure start
         layout.currentMeasureIndex += 1;
-        layout.measureStartAbsoluteX = absoluteBarlineX + 30; // Start new measure after barline + padding
-        layout.currentMeasureNotes = []; // Clear shadow notes
+        layout.measureStartAbsoluteX = absoluteBarlineX + 30;
+        layout.currentMeasureNotes = [];
       }
 
-      // 3. Calculate Absolute Note Position
+      // Calculate absolute X based on updated measure start
       const absoluteX =
         layout.measureStartAbsoluteX + positionInMeasure * positionSpacing;
 
-      // Update head (furthest point)
-      if (absoluteX > layout.absoluteHeadX) {
-        layout.absoluteHeadX = absoluteX;
-      }
-
-      // Add to shadow list for next bar calculation
+      // Record this note for the NEXT bar calculation
       layout.currentMeasureNotes.push({
         position: positionInMeasure,
         duration: noteType,
       });
 
-      // 4. Create Note Object (using AbsoluteX, NOT screen X)
+      if (absoluteX > layout.absoluteHeadX) layout.absoluteHeadX = absoluteX;
+
       const newNote: Note = {
         id: `note-${Date.now()}-${Math.random()}`,
         midiPitch: drawPitch,
@@ -329,24 +266,21 @@ export default function App() {
         positionInMeasure,
         noteType,
         timestamp: Date.now(),
-        absoluteX: absoluteX, // NEW FIELD
+        absoluteX: absoluteX,
         measureIndex: layout.currentMeasureIndex,
         barlineX,
         color,
       };
 
       setNotes((prev) => [...prev, newNote]);
-
       if (currentBpm) setBpm(currentBpm);
 
-      // Visual feedback key
       if (midiPitch > 0) {
-        const pressedPitch = midiPitch;
-        setPressedKeys((prev) => new Set([...prev, pressedPitch]));
+        setPressedKeys((prev) => new Set([...prev, midiPitch]));
         setTimeout(() => {
           setPressedKeys((prev) => {
             const updated = new Set(prev);
-            updated.delete(pressedPitch);
+            updated.delete(midiPitch);
             return updated;
           });
         }, 200);
@@ -355,7 +289,6 @@ export default function App() {
     [minBeatLevel]
   );
 
-  // Expose to window
   useEffect(() => {
     (window as any).drawNote = drawNote;
     return () => {
@@ -370,53 +303,38 @@ export default function App() {
     sound.stopAllNotes();
     mbtRef.current?.reset();
 
-    // Reset Layout Ref
+    // 3. Reset the separator when clearing score
+    handSeparatorRef.current.reset();
+
     layoutStateRef.current = {
       currentMeasureIndex: 0,
       measureStartAbsoluteX: window.innerWidth * 0.5,
       absoluteHeadX: window.innerWidth * 0.5,
       currentMeasureNotes: [],
     };
-
     setDrawCallback(drawNote);
   }, [drawNote, sound]);
 
-  // Demo Keyboard Hooks (Simplified for brevity, same as original logic but calling drawNote)
-  const positionCounterRef = React.useRef<number>(0);
+  // Key handlers (demo)
   useEffect(() => {
     const handleKeyPress = (e: KeyboardEvent) => {
-      if (NDEBUG) return;
       if (e.key === "c") handleClear();
-      // ... [Insert previous keyboard demo logic here if needed] ...
     };
     window.addEventListener("keypress", handleKeyPress);
     return () => window.removeEventListener("keypress", handleKeyPress);
   }, [handleClear]);
 
-  useEffect(() => {
-    // Scorify demo keys logic...
-    const handleScorifyKeyPress = (e: KeyboardEvent) => {
-      if (NDEBUG) return;
-      // ... [Insert previous scorify demo logic] ...
-    };
-    window.addEventListener("keypress", handleScorifyKeyPress);
-    return () => window.removeEventListener("keypress", handleScorifyKeyPress);
-  }, []);
-
   function computeTatum(level: number) {
     return Math.round(level / 4);
   }
 
-  // Render
-  if (loadingMBT) {
+  if (loadingMBT)
     return (
       <div className="loading-screen">
         <div className="spinner"></div>
         <p>{status}</p>
       </div>
     );
-  }
-
   if (error)
     return (
       <div className="error-screen">
@@ -435,7 +353,6 @@ export default function App() {
             Real-Time "Scorification"
           </h1>
         </div>
-
         <ControlPanel
           minBeatLevel={minBeatLevel}
           onMinBeatLevelChange={(level) => {
@@ -452,18 +369,16 @@ export default function App() {
           metronomeOn={metronomeStatus}
           onMetronomeClick={handleMetronomeToggle}
         />
-
         <div className="h-96 bg-white rounded-lg shadow-lg">
           <ScoreDisplay
             notes={notes}
             bpm={bpm}
             keySignature={keySignature}
             minBeatLevel={minBeatLevel}
-            onNotesUpdate={() => {}} // No longer needed for logic, maybe for debug
-            onScrollOffsetUpdate={() => {}} // Internalized in ScoreDisplay
+            onNotesUpdate={() => {}}
+            onScrollOffsetUpdate={() => {}}
           />
         </div>
-
         <div className="space-y-2">
           <h2 className="text-gray-700 text-sm">88-Key Piano Keyboard</h2>
           <PianoKeyboard pressedKeys={pressedKeys} />

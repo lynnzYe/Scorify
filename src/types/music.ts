@@ -10,9 +10,9 @@ export interface Note {
   // CHANGE: We now store the absolute world coordinate
   absoluteX: number;
 
-  measureIndex: number;
-  barlineX?: number; // Absolute X position of barline
-  color: "black" | "blue";
+  measureIndex: number; // Which measure this note belongs to
+  barlineX?: number; // X position of barline if newBar is true
+  color: "black" | "blue"; // optional color
 }
 
 export interface KeySignature {

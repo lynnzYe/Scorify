@@ -26,7 +26,7 @@ export const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
   const animationFrameRef = useRef<number>(0);
   const lastTimeRef = useRef<number>(0);
 
-  // Camera state
+  // Camera state tracks the X offset of the viewport
   const currentScrollRef = useRef<number>(0);
 
   const STAFF_LINE_SPACING = 12;
@@ -41,10 +41,8 @@ export const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
   ) => {
     ctx.strokeStyle = "#000";
     ctx.lineWidth = 1;
-
-    // Optimize: only draw visible area if needed, but simple lines are cheap
-    // For infinite scroll illusion, we draw based on scrollX
-    const startX = Math.floor(scrollX / 100) * 100 - 100; // Draw slightly offscreen left
+    // Draw lines only across the potentially visible area + buffer
+    const startX = Math.floor(scrollX / 100) * 100 - 100;
     const endX = scrollX + width + 100;
 
     for (let i = 0; i < 5; i++) {
@@ -59,27 +57,25 @@ export const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
   const drawClef = (
     ctx: CanvasRenderingContext2D,
     type: "treble" | "bass",
-    y: number,
-    scrollX: number
+    y: number
   ) => {
-    // Keep clefs fixed on screen left? Or scroll them?
-    // Usually fixed on screen is better for UI, but let's scroll them off for "continuous" feel
-    // OR keep them fixed:
     ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0); // Reset transform to draw UI elements
+    ctx.setTransform(1, 0, 0, 1, 0, 0); // Identity transform to draw fixed UI
 
     ctx.fillStyle = "#000";
-    ctx.font = "48px serif";
+    // Increased size to 72px (approx 1.5x)
+    ctx.font = "72px serif";
+
     if (type === "treble") {
-      ctx.fillText("𝄞", 10, y + STAFF_LINE_SPACING * 3.5);
+      // Adjusted Y offset for larger font
+      ctx.fillText("𝄞", 10, y + STAFF_LINE_SPACING * 4.5);
     } else {
-      ctx.fillText("𝄢", 10, y + STAFF_LINE_SPACING * 2.5);
+      ctx.fillText("𝄢", 10, y + STAFF_LINE_SPACING * 3.5);
     }
 
     ctx.restore();
   };
 
-  // ... [Keep drawNoteHead, drawStem, drawFlag, drawRest unchanged] ...
   const drawNoteHead = (
     ctx: CanvasRenderingContext2D,
     x: number,
@@ -163,7 +159,8 @@ export const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
   };
 
   const renderNote = (ctx: CanvasRenderingContext2D, note: Note) => {
-    const x = note.absoluteX; // Use absolute world position
+    // Note: note.absoluteX is now used directly
+    const x = note.absoluteX;
 
     const staffY = note.staff === "treble" ? TREBLE_STAFF_Y : BASS_STAFF_Y;
     const position = midiToStaffPosition(note.midiPitch, note.staff);
@@ -210,8 +207,8 @@ export const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
         : 0;
       lastTimeRef.current = currentTime;
 
-      // 1. Calculate Target Scroll
-      // Find rightmost element (note or barline)
+      // --- SCROLL LOGIC ---
+      // Determine the right-most point of the content
       let maxX = 0;
       if (notes.length > 0) {
         const lastNote = notes[notes.length - 1];
@@ -221,7 +218,7 @@ export const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
         }
       }
 
-      // We want the rightmost content to be at ~66% of the screen width
+      // Target position: We want content to be at ~66% of screen
       const targetScreenPos = canvas.width * 0.66;
       let targetScroll = 0;
 
@@ -229,48 +226,42 @@ export const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
         targetScroll = maxX - targetScreenPos;
       }
 
-      // Smoothly interpolate scroll
-      // If we are far behind, move faster. If close, move slower.
+      // Smooth camera interpolation
       const scrollDiff = targetScroll - currentScrollRef.current;
-
-      // Speed factor based on BPM (pixels/sec approx) to feel musical, or just simple Lerp
-      // Using simple Lerp with a minimum speed floor ensures we catch up
       if (Math.abs(scrollDiff) > 1) {
-        const lerpFactor = 5 * deltaTime; // Adjust 5 for stiffness
-        const minSpeed = 50 * deltaTime; // Minimum movement px per frame
+        const lerpFactor = 5 * deltaTime;
+        const minSpeed = 50 * deltaTime;
 
         if (scrollDiff > 0) {
-          // Scrolling forward
+          // Forward scrolling
           currentScrollRef.current += Math.max(
             scrollDiff * lerpFactor,
             Math.min(scrollDiff, minSpeed)
           );
         } else {
-          // Scrolling backward (rare, usually resizing)
+          // Backward scrolling (e.g. resize/reset)
           currentScrollRef.current += scrollDiff * lerpFactor;
         }
       }
 
-      // Clear
+      // --- RENDERING ---
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // Save context for camera translation
+      // Apply Camera Transform
       ctx.save();
-
-      // Apply Camera
       ctx.translate(-currentScrollRef.current, 0);
 
-      // Render World
+      // Draw Staves
       drawStaff(ctx, TREBLE_STAFF_Y, canvas.width, currentScrollRef.current);
       drawStaff(ctx, BASS_STAFF_Y, canvas.width, currentScrollRef.current);
 
-      // Optimize: Only filter visible notes
+      // Render Visible Notes
       const viewStart = currentScrollRef.current - 50;
       const viewEnd = currentScrollRef.current + canvas.width + 50;
 
       const visibleNotes = notes.filter((n) => {
-        const x = n.absoluteX;
-        return x >= viewStart && x <= viewEnd;
+        // simple visibility check
+        return n.absoluteX >= viewStart && n.absoluteX <= viewEnd;
       });
 
       visibleNotes.forEach((note) => {
@@ -280,11 +271,11 @@ export const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
         renderNote(ctx, note);
       });
 
-      ctx.restore(); // Restore to draw UI overlays (Clefs)
+      ctx.restore();
 
-      // Draw Clefs (Fixed position)
-      drawClef(ctx, "treble", TREBLE_STAFF_Y, 0);
-      drawClef(ctx, "bass", BASS_STAFF_Y, 0);
+      // Draw Fixed UI (Clefs)
+      drawClef(ctx, "treble", TREBLE_STAFF_Y);
+      drawClef(ctx, "bass", BASS_STAFF_Y);
 
       animationFrameRef.current = requestAnimationFrame(animate);
     },
