@@ -1,11 +1,17 @@
+# Real-Time Piano "Scorification" UI
 
-  # Real-Time Piano Transcription UI
+This is a code bundle for Real-Time Piano "Scorification" UI.
 
-  This is a code bundle for Real-Time Piano Transcription UI. The original project is available at https://www.figma.com/design/9hqpELRaV8DA6pJHhko8cs/Real-Time-Piano-Transcription-UI.
+Project development involves use of AI (figma, Gemini)
 
-  ## Running the code
+## Running the code
 
-  Run `npm i` to install the dependencies.
+Run `npm i` to install the dependencies.
 
-  Run `npm run dev` to start the development server.
-  
+Run `npm run dev` to start the development server.
+
+## Features
+
+1. Real-time joint beat and downbeat tracking + sonification + visualization!
+2. Real-time rendering of expressive piano performance into musical score.
+3. Fast smart left/right hand separation.
