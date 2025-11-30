@@ -148,7 +148,7 @@ export function drawBuffedNotes() {
     // Step 4: process all pending notes BEFORE this beat
     const notesToDraw = [...pendingNotes];
     const tatumSize = smoothedInterval / defaultTatum;
-    console.debug("=======tatum size:", defaultTatum, 'smoothed interval:', smoothedInterval, 'beattime:', beatTime, 'virtual beat:', virtualBeats)
+    // console.debug("=======tatum size:", defaultTatum, 'smoothed interval:', smoothedInterval, 'beattime:', beatTime, 'virtual beat:', virtualBeats)
 
     // Step 5: loop and draw all notes
     let latestTatumIdx = 0
@@ -167,8 +167,10 @@ export function drawBuffedNotes() {
         let beatsToPrev = 1
         let isDownbeat = isFirstBeat || (latestGroup[0].isDownbeat && Math.abs(note.timestamp - beatTime) < ON_BEAT_TOLERANCE_MS)
         // Case 2 (or when previous note is on beat, current also)
-        if (latestGroup.length > 0 && Math.abs(delta) < ON_BEAT_TOLERANCE_MS) {
-            console.debug("found more note on beat, time:", note.timestamp)
+        const isGroupedBeat = latestGroup.length > 0 && Math.abs(delta) < ON_BEAT_TOLERANCE_MS
+        const isBeat = isGroupedBeat || isDownbeat || (Math.abs(note.timestamp - beatTime) < ON_BEAT_TOLERANCE_MS)
+        if (isGroupedBeat) {
+            // console.debug("found more note on beat, time:", note.timestamp)
             beatsToPrev = 0
             index = 0
             isDownbeat = false || isFirstBeat // There is a previous downbeat and in the same group. don't start a new measure this time, unless it is at the start.
@@ -185,9 +187,11 @@ export function drawBuffedNotes() {
 
         let positionInMeasure = currentMeasureTatumIndex + index;
 
-        console.debug("Curr note:", note, 'delta:', delta, 'lastbeat:', lastBeatTimestamp, 'tatumSize:', tatumSize,
-            'pre index:', index, 'isdownbeat:', isDownbeat, 'latest group', latestGroup, 'beats between:', beatsBetween,
-            'draw position:', positionInMeasure, 'index:', index, 'smoothed', smoothedInterval);
+        console.debug("==== Draw Note:", note, 'is Grouped beat:', isGroupedBeat, 'delta:', delta, 'lastbeat:', lastBeatTimestamp,
+            'tatumSize:', tatumSize, 'pre index:', index, 'isdownbeat:', isDownbeat, 'latest group', latestGroup,
+            'beats between:', beatsBetween, 'draw position:', positionInMeasure, 'index:', index, 'smoothed', smoothedInterval);
+
+        let color = (isBeat) ? 'blue' : "black";
         // drawCallback(
         (window as any).drawNote(
             note.midi,
@@ -195,7 +199,8 @@ export function drawBuffedNotes() {
             isDownbeat, // if true, will draw a new measure line and reset measure tatum index to 0 (above)
             positionInMeasure,
             8, // default note type
-            120, // debug use default draw BPM // getCurrentBpm()
+            150,
+            color
         );
         latestTatumIdx = index
         isFirstBeat = false // After any note is drawn, we are no longer at the start of scorification.
@@ -298,7 +303,7 @@ function getVirtualBeats(currentBeatTime: number): number {
 
     const observed = currentBeatTime - lastBeatTimestamp;
     const expected = smoothedInterval;
-    console.debug("Cal virtual beat, observed:", observed, 'expected', expected)
+    // console.debug("Cal virtual beat, observed:", observed, 'expected', expected)
     if (observed < expected * MAX_TEMPO_JUMP) return 0; // twice as slow
 
     // Estimate missing beats

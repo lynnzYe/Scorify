@@ -9,6 +9,7 @@ export interface Note {
   xPosition: number; // Current x position on canvas (calculated from position in measure)
   measureIndex: number; // Which measure this note belongs to
   barlineX?: number; // X position of barline if newBar is true
+  color: "black" | "blue"; // optional color
 }
 
 export interface KeySignature {

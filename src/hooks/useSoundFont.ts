@@ -1,3 +1,4 @@
+import { DessertIcon } from 'lucide-react';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import Soundfont, { InstrumentName } from 'soundfont-player';
 
@@ -20,7 +21,12 @@ export const useSoundFont = (instrument: InstrumentName = 'acoustic_grand_piano'
         const loadInstrument = async () => {
             try {
                 const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-                const player = await Soundfont.instrument(audioContext, instrument);
+                const masterGain = audioContext.createGain();
+                masterGain.gain.value = 6.0;
+                masterGain.connect(audioContext.destination);
+                const player = await Soundfont.instrument(audioContext, instrument, {
+                    destination: masterGain
+                });
 
                 if (isMounted) {
                     instrumentRef.current = player;
@@ -62,7 +68,7 @@ export const useSoundFont = (instrument: InstrumentName = 'acoustic_grand_piano'
         const note = instrumentRef.current.play(midiPitch, undefined, { gain });
         activeNotesRef.current.set(midiPitch, note);
 
-        console.debug("DEBUG: played note", midiPitch, velocity)
+        // console.debug("DEBUG: played note", midiPitch, velocity)
     }, []);
 
     // Stop a note

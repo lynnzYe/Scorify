@@ -13,10 +13,10 @@ export interface MIDIControllerEvent {
 interface UseMIDIReturn {
     isConnected: boolean;
     isSupported: boolean;
-    connect: () => Promise<void>;
+    connect: () => Promise<string | null>;
     disconnect: () => void;
-    onNoteOn: (callback: (event: MIDINoteEvent) => void) => void;
-    onNoteOff: (callback: (event: MIDINoteEvent) => void) => void;
+    onNoteOn: (callback: (event: MIDINoteEvent) => void) => () => void;
+    onNoteOff: (callback: (event: MIDINoteEvent) => void) => () => void;
     onController: (callback: (event: MIDIControllerEvent) => void) => () => void; // <-- new
     error: string | null;
 }
@@ -67,8 +67,9 @@ export const useMIDI = (): UseMIDIReturn => {
     // Connect to MIDI
     const connect = useCallback(async () => {
         if (!navigator.requestMIDIAccess) {
-            setError('Web MIDI API is not supported in this browser');
-            return;
+            const err = 'Web MIDI API is not supported in this browser'
+            setError(err);
+            return err;
         }
 
         try {
@@ -77,8 +78,29 @@ export const useMIDI = (): UseMIDIReturn => {
             setMidiAccess(access);
 
             const updateConnectionState = () => {
-                const hasDevice = access.inputs.size > 0;
-                setIsConnected(hasDevice);
+                console.log("MIDI inputs:", Array.from(access.inputs.values()), 'size:', access.inputs.size)
+                let hasPhysicalDevice = Array.from(access.inputs.values()).some(input =>
+                    input.state === "connected" &&
+                    // input.connection === "open" && 
+                    input.manufacturer !== ""
+                );
+                console.log("Has physical device?:", hasPhysicalDevice)
+                access.onstatechange = (e) => {
+                    console.debug("Port updated:", e.port?.name, e.port?.connection);
+                    hasPhysicalDevice = Array.from(access.inputs.values()).some(input =>
+                        input.state === "connected" &&
+                        input.connection === "open" &&
+                        input.manufacturer !== ""
+                    );
+                    return true
+                };
+                if (access.inputs.size == 1 && Array.from(access.inputs.values())[0].name?.includes("IAC")) {
+                    console.warn("Only IAC bus is found.")
+                }
+                if (!hasPhysicalDevice) {
+                    return false
+                }
+                return true
             };
 
             // Attach listeners to existing devices
@@ -101,10 +123,13 @@ export const useMIDI = (): UseMIDIReturn => {
             };
             console.debug("DEBUG: Set midi connected to true")
             setIsConnected(true);
+            return null
         } catch (err) {
-            setError('Failed to access MIDI devices. Permission denied or no devices found.');
+            const errr = 'Failed to access MIDI devices. Permission denied or no devices found.';
+            setError(errr);
             setIsConnected(false);
-            console.error('MIDI connection error:', err);
+            console.error('MIDI connection error:', errr);
+            return errr
         }
     }, [handleMIDIMessage]);
 
