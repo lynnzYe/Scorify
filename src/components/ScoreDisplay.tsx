@@ -15,86 +15,43 @@ interface ScoreDisplayProps {
   onScrollOffsetUpdate: (offset: number) => void;
 }
 
+const ALTERNATE_COLOR = "#9188f3";
 
-const ALTERNATE_COLOR = '#9188f3'
 export const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
   notes,
   bpm,
   keySignature,
-  minBeatLevel,
-  onNotesUpdate,
-  onScrollOffsetUpdate,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationFrameRef = useRef<number>(0);
   const lastTimeRef = useRef<number>(0);
-  const totalScrollOffsetRef = useRef<number>(0);
+
+  // Camera state
+  const currentScrollRef = useRef<number>(0);
 
   const STAFF_LINE_SPACING = 12;
   const TREBLE_STAFF_Y = 80;
   const BASS_STAFF_Y = 200;
 
-  // Calculate scroll speed based on note density
-  const calculateScrollSpeed = useCallback(
-    (notes: Note[], canvasWidth: number) => {
-      if (notes.length === 0) return 0;
-
-      // Target: keep rightmost note around 2/3 (67%) of the screen
-      const targetX = canvasWidth * 0.67;
-
-      // Find the rightmost note position
-      const rightmostX = notes.reduce(
-        (max, note) => Math.max(max, note.xPosition),
-        0
-      );
-
-      // Calculate how far the rightmost note is from the target position
-      const deviation = rightmostX - targetX;
-
-      // Don't scroll if notes are within acceptable range (50%-70% of screen)
-      const acceptableMin = canvasWidth * 0.5;
-      const acceptableMax = canvasWidth * 0.7;
-
-      if (rightmostX >= acceptableMin && rightmostX <= acceptableMax) {
-        return 0; // No scrolling needed, notes are in good position
-      }
-
-      // If notes are too far right, scroll to bring them back
-      if (deviation > 0) {
-        // Base speed proportional to BPM
-        const baseSpeed = (bpm / 60) * 50; // pixels per second
-
-        // Increase speed based on how far past the target we are
-        const urgencyMultiplier = Math.max(1, deviation / 150);
-
-        // Calculate speed to bring notes back to target within a reasonable time
-        const calculatedSpeed = baseSpeed * urgencyMultiplier;
-
-        // Guarantee notes come back to target position quickly if far away
-        const minimumSpeed = deviation * 0.8; // Move 80% of the distance per second
-
-        return Math.max(calculatedSpeed, minimumSpeed);
-      }
-
-      return 0;
-    },
-    [bpm]
-  );
-
   const drawStaff = (
     ctx: CanvasRenderingContext2D,
     y: number,
-    width: number
+    width: number,
+    scrollX: number
   ) => {
     ctx.strokeStyle = "#000";
     ctx.lineWidth = 1;
 
-    // Draw 5 horizontal lines
+    // Optimize: only draw visible area if needed, but simple lines are cheap
+    // For infinite scroll illusion, we draw based on scrollX
+    const startX = Math.floor(scrollX / 100) * 100 - 100; // Draw slightly offscreen left
+    const endX = scrollX + width + 100;
+
     for (let i = 0; i < 5; i++) {
       const lineY = y + i * STAFF_LINE_SPACING;
       ctx.beginPath();
-      ctx.moveTo(60, lineY);
-      ctx.lineTo(width, lineY);
+      ctx.moveTo(startX, lineY);
+      ctx.lineTo(endX, lineY);
       ctx.stroke();
     }
   };
@@ -102,77 +59,27 @@ export const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
   const drawClef = (
     ctx: CanvasRenderingContext2D,
     type: "treble" | "bass",
-    y: number
+    y: number,
+    scrollX: number
   ) => {
+    // Keep clefs fixed on screen left? Or scroll them?
+    // Usually fixed on screen is better for UI, but let's scroll them off for "continuous" feel
+    // OR keep them fixed:
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0); // Reset transform to draw UI elements
+
     ctx.fillStyle = "#000";
     ctx.font = "48px serif";
-
     if (type === "treble") {
-      // Treble clef (𝄞)
       ctx.fillText("𝄞", 10, y + STAFF_LINE_SPACING * 3.5);
     } else {
-      // Bass clef (𝄢)
       ctx.fillText("𝄢", 10, y + STAFF_LINE_SPACING * 2.5);
     }
+
+    ctx.restore();
   };
 
-  const drawBarline = (ctx: CanvasRenderingContext2D, x: number) => {
-    ctx.strokeStyle = "#000";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(x, TREBLE_STAFF_Y);
-    ctx.lineTo(x, BASS_STAFF_Y + STAFF_LINE_SPACING * 4);
-    ctx.stroke();
-  };
-
-  const drawNote = (ctx: CanvasRenderingContext2D, note: Note, x: number) => {
-    const staffY = note.staff === "treble" ? TREBLE_STAFF_Y : BASS_STAFF_Y;
-    const position = midiToStaffPosition(note.midiPitch, note.staff);
-
-    // Y position: each position increment = half a line spacing
-    // Position 0 = bottom line, position 8 = top line
-    const noteY = staffY + (8 - position) * (STAFF_LINE_SPACING / 2);
-
-    if (note.midiPitch === 0) {
-      // Draw rest at middle of staff
-      const restY = staffY + STAFF_LINE_SPACING * 2;
-      drawRest(ctx, note.noteType, x, restY);
-    } else {
-      // Draw ledger lines if needed (must be drawn before note)
-      const ledgerLines = needsLedgerLines(position);
-      ctx.strokeStyle = "#000";
-      ctx.lineWidth = 1;
-      ledgerLines.forEach((linePos) => {
-        const ledgerY = staffY + (8 - linePos) * (STAFF_LINE_SPACING / 2);
-        ctx.beginPath();
-        ctx.moveTo(x - 10, ledgerY);
-        ctx.lineTo(x + 10, ledgerY);
-        ctx.stroke();
-      });
-
-      let colorCode = "#000";
-      if (note.color != "black") {
-        colorCode = ALTERNATE_COLOR;
-      }
-
-      // Draw accidental if needed
-      const accidental = getAccidentalForPitch(note.midiPitch, keySignature);
-      if (accidental) {
-        ctx.fillStyle = colorCode;
-        ctx.font = "16px serif";
-        ctx.fillText(accidental, x - 15, noteY + 4);
-      }
-
-      // Draw note head
-      drawNoteHead(ctx, x, noteY, note.noteType, colorCode);
-
-      // Draw stem for quarter notes and shorter
-      if (note.noteType >= 4) {
-        drawStem(ctx, x, noteY, note.noteType, colorCode);
-      }
-    }
-  };
-
+  // ... [Keep drawNoteHead, drawStem, drawFlag, drawRest unchanged] ...
   const drawNoteHead = (
     ctx: CanvasRenderingContext2D,
     x: number,
@@ -183,21 +90,13 @@ export const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
     ctx.fillStyle = color;
     ctx.strokeStyle = color;
     ctx.lineWidth = 1.5;
-
-    // Elliptical note head
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(-0.3);
     ctx.beginPath();
     ctx.ellipse(0, 0, 5, 4, 0, 0, Math.PI * 2);
-
-    if (noteType >= 4) {
-      // Filled for quarter note and shorter
-      ctx.fill();
-    } else {
-      // Hollow for half and whole notes
-      ctx.stroke();
-    }
+    if (noteType >= 4) ctx.fill();
+    else ctx.stroke();
     ctx.restore();
   };
 
@@ -210,22 +109,14 @@ export const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
   ) => {
     ctx.strokeStyle = color;
     ctx.lineWidth = 1.5;
-
-    // Stem goes up or down
     const stemHeight = STAFF_LINE_SPACING * 3.5;
     const stemX = x + 4;
-
     ctx.beginPath();
     ctx.moveTo(stemX, y);
     ctx.lineTo(stemX, y - stemHeight);
     ctx.stroke();
-
-    // Add flags for eighth and sixteenth notes
-    if (noteType === 8) {
-      drawFlag(ctx, stemX, y - stemHeight, 1, color);
-    } else if (noteType === 16) {
-      drawFlag(ctx, stemX, y - stemHeight, 2, color);
-    }
+    if (noteType === 8) drawFlag(ctx, stemX, y - stemHeight, 1, color);
+    else if (noteType === 16) drawFlag(ctx, stemX, y - stemHeight, 2, color);
   };
 
   const drawFlag = (
@@ -237,7 +128,6 @@ export const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
   ) => {
     ctx.strokeStyle = color;
     ctx.lineWidth = 1.5;
-
     for (let i = 0; i < count; i++) {
       const flagY = y + i * 4;
       ctx.beginPath();
@@ -255,32 +145,62 @@ export const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
   ) => {
     ctx.fillStyle = "#000";
     ctx.font = "20px serif";
-
-    let restSymbol = "";
-    switch (noteType) {
-      case 2:
-        restSymbol = "𝄼"; // half rest
-        break;
-      case 4:
-        restSymbol = "𝄽"; // quarter rest
-        break;
-      case 8:
-        restSymbol = "𝄾"; // eighth rest
-        break;
-      case 16:
-        restSymbol = "𝄿"; // sixteenth rest
-        break;
-      default:
-        restSymbol = "𝄻"; // whole rest
-    }
-
+    let restSymbol = "𝄻";
+    if (noteType === 2) restSymbol = "𝄼";
+    else if (noteType === 4) restSymbol = "𝄽";
+    else if (noteType === 8) restSymbol = "𝄾";
+    else if (noteType === 16) restSymbol = "𝄿";
     ctx.fillText(restSymbol, x - 5, y);
+  };
+
+  const drawBarline = (ctx: CanvasRenderingContext2D, x: number) => {
+    ctx.strokeStyle = "#000";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x, TREBLE_STAFF_Y);
+    ctx.lineTo(x, BASS_STAFF_Y + STAFF_LINE_SPACING * 4);
+    ctx.stroke();
+  };
+
+  const renderNote = (ctx: CanvasRenderingContext2D, note: Note) => {
+    const x = note.absoluteX; // Use absolute world position
+
+    const staffY = note.staff === "treble" ? TREBLE_STAFF_Y : BASS_STAFF_Y;
+    const position = midiToStaffPosition(note.midiPitch, note.staff);
+    const noteY = staffY + (8 - position) * (STAFF_LINE_SPACING / 2);
+
+    if (note.midiPitch === 0) {
+      const restY = staffY + STAFF_LINE_SPACING * 2;
+      drawRest(ctx, note.noteType, x, restY);
+    } else {
+      const ledgerLines = needsLedgerLines(position);
+      ctx.strokeStyle = "#000";
+      ctx.lineWidth = 1;
+      ledgerLines.forEach((linePos) => {
+        const ledgerY = staffY + (8 - linePos) * (STAFF_LINE_SPACING / 2);
+        ctx.beginPath();
+        ctx.moveTo(x - 10, ledgerY);
+        ctx.lineTo(x + 10, ledgerY);
+        ctx.stroke();
+      });
+
+      let colorCode = note.color !== "black" ? ALTERNATE_COLOR : "#000";
+      const accidental = getAccidentalForPitch(note.midiPitch, keySignature);
+      if (accidental) {
+        ctx.fillStyle = colorCode;
+        ctx.font = "16px serif";
+        ctx.fillText(accidental, x - 15, noteY + 4);
+      }
+      drawNoteHead(ctx, x, noteY, note.noteType, colorCode);
+      if (note.noteType >= 4) {
+        drawStem(ctx, x, noteY, note.noteType, colorCode);
+      }
+    }
   };
 
   const animate = useCallback(
     (currentTime: number) => {
       if (!canvasRef.current) return;
-
       const canvas = canvasRef.current;
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
@@ -290,82 +210,106 @@ export const ScoreDisplay: React.FC<ScoreDisplayProps> = ({
         : 0;
       lastTimeRef.current = currentTime;
 
-      // Clear canvas
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      // Draw staves
-      drawStaff(ctx, TREBLE_STAFF_Y, canvas.width);
-      drawStaff(ctx, BASS_STAFF_Y, canvas.width);
-
-      // Draw clefs
-      drawClef(ctx, "treble", TREBLE_STAFF_Y);
-      drawClef(ctx, "bass", BASS_STAFF_Y);
-
-      // Calculate scroll speed
-      const scrollSpeed = calculateScrollSpeed(notes, canvas.width);
-
-      // Track total scroll offset
-      if (scrollSpeed > 0) {
-        totalScrollOffsetRef.current += scrollSpeed * deltaTime;
-        onScrollOffsetUpdate(totalScrollOffsetRef.current);
+      // 1. Calculate Target Scroll
+      // Find rightmost element (note or barline)
+      let maxX = 0;
+      if (notes.length > 0) {
+        const lastNote = notes[notes.length - 1];
+        maxX = lastNote.absoluteX;
+        if (lastNote.barlineX && lastNote.barlineX > maxX) {
+          maxX = lastNote.barlineX;
+        }
       }
 
-      // Update note positions and render (also update barline positions)
-      const updatedNotes = notes
-        .map((note) => ({
-          ...note,
-          xPosition: note.xPosition - scrollSpeed * deltaTime,
-          barlineX:
-            note.barlineX !== undefined
-              ? note.barlineX - scrollSpeed * deltaTime
-              : undefined,
-        }))
-        .filter((note) => note.xPosition > -50); // Remove notes that have scrolled off screen
+      // We want the rightmost content to be at ~66% of the screen width
+      const targetScreenPos = canvas.width * 0.66;
+      let targetScroll = 0;
 
-      // Draw barlines and notes
-      updatedNotes.forEach((note, index) => {
+      if (maxX > targetScreenPos) {
+        targetScroll = maxX - targetScreenPos;
+      }
+
+      // Smoothly interpolate scroll
+      // If we are far behind, move faster. If close, move slower.
+      const scrollDiff = targetScroll - currentScrollRef.current;
+
+      // Speed factor based on BPM (pixels/sec approx) to feel musical, or just simple Lerp
+      // Using simple Lerp with a minimum speed floor ensures we catch up
+      if (Math.abs(scrollDiff) > 1) {
+        const lerpFactor = 5 * deltaTime; // Adjust 5 for stiffness
+        const minSpeed = 50 * deltaTime; // Minimum movement px per frame
+
+        if (scrollDiff > 0) {
+          // Scrolling forward
+          currentScrollRef.current += Math.max(
+            scrollDiff * lerpFactor,
+            Math.min(scrollDiff, minSpeed)
+          );
+        } else {
+          // Scrolling backward (rare, usually resizing)
+          currentScrollRef.current += scrollDiff * lerpFactor;
+        }
+      }
+
+      // Clear
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Save context for camera translation
+      ctx.save();
+
+      // Apply Camera
+      ctx.translate(-currentScrollRef.current, 0);
+
+      // Render World
+      drawStaff(ctx, TREBLE_STAFF_Y, canvas.width, currentScrollRef.current);
+      drawStaff(ctx, BASS_STAFF_Y, canvas.width, currentScrollRef.current);
+
+      // Optimize: Only filter visible notes
+      const viewStart = currentScrollRef.current - 50;
+      const viewEnd = currentScrollRef.current + canvas.width + 50;
+
+      const visibleNotes = notes.filter((n) => {
+        const x = n.absoluteX;
+        return x >= viewStart && x <= viewEnd;
+      });
+
+      visibleNotes.forEach((note) => {
         if (note.newBar && note.barlineX !== undefined) {
           drawBarline(ctx, note.barlineX);
         }
-        drawNote(ctx, note, note.xPosition);
+        renderNote(ctx, note);
       });
 
-      onNotesUpdate(updatedNotes);
+      ctx.restore(); // Restore to draw UI overlays (Clefs)
+
+      // Draw Clefs (Fixed position)
+      drawClef(ctx, "treble", TREBLE_STAFF_Y, 0);
+      drawClef(ctx, "bass", BASS_STAFF_Y, 0);
 
       animationFrameRef.current = requestAnimationFrame(animate);
     },
-    [notes, calculateScrollSpeed, onNotesUpdate]
+    [notes, bpm]
   );
 
   useEffect(() => {
     animationFrameRef.current = requestAnimationFrame(animate);
-
-    return () => {
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
-    };
+    return () => cancelAnimationFrame(animationFrameRef.current);
   }, [animate]);
 
-  // Reset scroll offset when notes are cleared
+  // Reset scroll on clear
   useEffect(() => {
     if (notes.length === 0) {
-      totalScrollOffsetRef.current = 0;
-      onScrollOffsetUpdate(0);
+      currentScrollRef.current = 0;
     }
-  }, [notes.length, onScrollOffsetUpdate]);
+  }, [notes.length]);
 
   useEffect(() => {
     const handleResize = () => {
-      if (canvasRef.current) {
-        const parent = canvasRef.current.parentElement;
-        if (parent) {
-          canvasRef.current.width = parent.clientWidth;
-          canvasRef.current.height = 350;
-        }
+      if (canvasRef.current && canvasRef.current.parentElement) {
+        canvasRef.current.width = canvasRef.current.parentElement.clientWidth;
+        canvasRef.current.height = 350;
       }
     };
-
     handleResize();
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
