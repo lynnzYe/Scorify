@@ -27,3 +27,12 @@
         transform: rotate(360deg);
     }
 }
+
+a {
+    text-decoration: underline;
+    color: #0078ff;
+}
+
+a:hover {
+    text-decoration-style: dotted;
+}

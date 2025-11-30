@@ -384,7 +384,31 @@ export default function App() {
           <PianoKeyboard pressedKeys={pressedKeys} />
         </div>
 
-        {/* Tips section ... */}
+        <h4>Tips</h4>
+        <ul className="text-gray-600 text-sm">
+          <li>1. Scorify requires a MIDI keyboard to interact!</li>
+          <li>
+            2. Notes predicted to be on-beat are purple. Off-beat notes are
+            black.
+          </li>
+          <li>3. You can hint the model by foot tapping on a pedal!</li>
+          <li>
+            4. Scorification (visualization) currently only supports 3/4, 4/4,
+            6/4 ... (any meter ending with 4 or 2), else you will see weird note
+            spacing.
+          </li>
+          <li>
+            5. However, beat tracking should support any meter! (or those
+            covered in the training data -
+            <a
+              target="_blank"
+              href="https://cheriell.github.io/research/ACPAS_dataset/"
+            >
+              ACPAS
+            </a>
+            )
+          </li>
+        </ul>
       </div>
     </div>
   );
