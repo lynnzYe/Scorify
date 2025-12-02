@@ -22,9 +22,10 @@ window.my = window.my || {};
       //     `${paramsDir}/tfjs/weights_manifest.json`
       //   );
       console.debug("fetch weights manifest, path:", `weights_manifest.json`);
-      const manifest = await fetch(`weights_manifest.json`);
+      // const BASE = import.meta.env.BASE_URL;
+      const manifest = await fetch(`model/weights_manifest.json`);
       const manifestJson = await manifest.json();
-      this._params = await tf.io.loadWeights(manifestJson, "");
+      this._params = await tf.io.loadWeights(manifestJson, "model");
       //   console.log("Load finished");
     }
 

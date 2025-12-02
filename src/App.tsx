@@ -1,7 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef } from "react";
 import { ScoreDisplay } from "./components/ScoreDisplay";
 import { PianoKeyboard } from "./components/PianoKeyboard";
-import { HandSeparator } from "./utils/handSeparator"; // Import the new utility
 import { ControlPanel } from "./components/ControlPanel";
 import { Note, MinBeatLevel, KeySignature } from "./types/music";
 import { KEY_SIGNATURES } from "./utils/musicNotation";
@@ -21,13 +20,9 @@ import {
   Staff,
   updateTatum,
   drawBuffedNotes,
-  BEAT_TYPE_PRESET,
-  NoteEvent,
-  BeatEvent,
-  PERF_PRESET,
-  BEAT_PRESET,
 } from "./utils/scorify";
 import { BEAT_THRES, DOWNBEAT_THRES } from "./model/beat-tracker";
+import { HandSeparator } from "./utils/handSeparator";
 
 const NDEBUG = true;
 
@@ -52,7 +47,6 @@ export default function App() {
   const lastTimeMsRef = useRef(0);
 
   // SYNCHRONOUS LAYOUT STATE
-  // Critical for atomic bar updates
   const layoutStateRef = useRef({
     currentMeasureIndex: 0,
     measureStartAbsoluteX: window.innerWidth * 0.5,
@@ -67,12 +61,30 @@ export default function App() {
   const [metronomeStatus, setMetronomeStatus] = useState(false);
   const audioContextRef = useRef<AudioContext | null>(null);
 
+  // --- AUDIO CONTEXT RESUME HELPER ---
+  const ensureAudioContext = useCallback(async () => {
+    if (!audioContextRef.current) {
+      audioContextRef.current = new AudioContext();
+    }
+    if (audioContextRef.current.state === "suspended") {
+      try {
+        await audioContextRef.current.resume();
+        console.log("AudioContext resumed successfully");
+      } catch (e) {
+        console.error("Failed to resume AudioContext", e);
+      }
+    }
+  }, []);
+
   function handleMetronomeToggle() {
+    ensureAudioContext(); // Resume on click
     setMetronomeStatus((prev) => !prev);
   }
 
   useEffect(() => {
+    // Initialize context (likely suspended until interaction)
     if (!audioContextRef.current) audioContextRef.current = new AudioContext();
+
     async function initMBT() {
       if (!window.my || !window.my.testBeatSS || !window.my.BeatTracker) {
         setError(true);
@@ -91,7 +103,21 @@ export default function App() {
     initMBT();
     setDrawCallback(drawNote);
     updateTatum(computeTatum(minBeatLevel));
-  }, []);
+
+    // Attempt to resume on any click in the window as a fallback
+    const resumeOnInteraction = () => {
+      ensureAudioContext();
+      window.removeEventListener("click", resumeOnInteraction);
+      window.removeEventListener("keydown", resumeOnInteraction);
+    };
+    window.addEventListener("click", resumeOnInteraction);
+    window.addEventListener("keydown", resumeOnInteraction);
+
+    return () => {
+      window.removeEventListener("click", resumeOnInteraction);
+      window.removeEventListener("keydown", resumeOnInteraction);
+    };
+  }, [ensureAudioContext, minBeatLevel]);
 
   function trackBeat(pitch: number, velocity: number, dbHint: boolean = false) {
     if (!mbtRef.current) return [0, 0];
@@ -121,20 +147,16 @@ export default function App() {
   }
 
   const handleMidiConnect = useCallback(async () => {
+    await ensureAudioContext(); // Resume on connect
     const err = await midi.connect();
     if (err) toast.error(err);
     else toast.success("MIDI device connected!");
-  }, [midi]);
+  }, [midi, ensureAudioContext]);
 
   const handleMidiDisconnect = useCallback(() => {
     midi.disconnect();
     toast.info("MIDI device disconnected");
   }, [midi]);
-
-  function determineStaff(midi: number): Staff {
-    // We use the competitive learning HandSeparator now.
-    return midi < 60 ? "bass" : "treble";
-  }
 
   const soundRef = useRef(sound);
   const metronomeStatusRef = useRef(metronomeStatus);
@@ -143,12 +165,10 @@ export default function App() {
   );
   const onAddBeatRef = useRef((t: number, d: boolean) => addBeat(t, d));
   const onDrawBuffedNotesRef = useRef(() => drawBuffedNotes());
-  // const determineStaffRef = useRef(determineStaff);
 
   useEffect(() => {
     soundRef.current = sound;
     metronomeStatusRef.current = metronomeStatus;
-    // determineStaffRef.current = determineStaff;
   }, [sound, metronomeStatus]);
 
   const handleController = useCallback((event: MIDIControllerEvent) => {
@@ -162,7 +182,17 @@ export default function App() {
 
   const handleNoteOn = useCallback((event: MIDINoteEvent) => {
     if (!audioContextRef.current) return;
-    const timestamp = audioContextRef.current.currentTime * 1000;
+
+    // Fallback: If context is still suspended, try resume (might fail if not triggered by user)
+    // or use performance.now() as a fallback for timestamp to prevent freezing
+    let timestamp = 0;
+    if (audioContextRef.current.state === "running") {
+      timestamp = audioContextRef.current.currentTime * 1000;
+    } else {
+      // Fallback for visual timing if audio is blocked
+      timestamp = performance.now();
+    }
+
     const { pitch, velocity } = event;
 
     const [beat_prob, downbeat_prob] = trackBeat(
@@ -174,14 +204,17 @@ export default function App() {
 
     if (soundRef.current.isLoaded) soundRef.current.playNote(pitch, velocity);
 
-    // 4. USE THE SEPARATOR HERE
+    // Use separator
     const staff = handSeparatorRef.current.classify(pitch);
     onAddNoteRef.current(pitch, staff, timestamp);
 
     if (beat_prob > BEAT_THRES) {
       onAddBeatRef.current(timestamp, downbeat_prob > DOWNBEAT_THRES);
       setTimeout(() => onDrawBuffedNotesRef.current(), 0);
-      if (metronomeStatusRef.current) {
+      if (
+        metronomeStatusRef.current &&
+        audioContextRef.current.state === "running"
+      ) {
         clickMetronome(
           audioContextRef.current,
           downbeat_prob > DOWNBEAT_THRES ? 1000 : 500
@@ -228,12 +261,9 @@ export default function App() {
       const layout = layoutStateRef.current;
       let barlineX: number | undefined;
 
-      // ATOMIC BAR UPDATE
-      // If newBar is requested, we calculate the bar line relative to the PREVIOUS measure contents
       if (newBar) {
         let barlineRelativePos = 0;
 
-        // Find furthest point of previous measure
         if (layout.currentMeasureNotes.length > 0) {
           const lastPosition = Math.max(
             ...layout.currentMeasureNotes.map((n) => n.position)
@@ -241,9 +271,6 @@ export default function App() {
           const notesAtLastPos = layout.currentMeasureNotes.filter(
             (n) => n.position === lastPosition
           );
-          // Default spacing unit is 1. If note is duration N, width is roughly N?
-          // Simplified: give it some padding based on minBeatLevel.
-          // noteType 4 (quarter) in minBeat 16 = 4 units.
           const positionDurations = notesAtLastPos.map(
             (n) => minBeatLevel / n.duration
           );
@@ -254,20 +281,17 @@ export default function App() {
         const absoluteBarlineX =
           layout.measureStartAbsoluteX +
           barlineRelativePos * positionSpacing +
-          40; // 40px padding
+          40;
         barlineX = absoluteBarlineX;
 
-        // Commit new measure start
         layout.currentMeasureIndex += 1;
         layout.measureStartAbsoluteX = absoluteBarlineX + 30;
         layout.currentMeasureNotes = [];
       }
 
-      // Calculate absolute X based on updated measure start
       const absoluteX =
         layout.measureStartAbsoluteX + positionInMeasure * positionSpacing;
 
-      // Record this note for the NEXT bar calculation
       layout.currentMeasureNotes.push({
         position: positionInMeasure,
         duration: noteType,
@@ -306,43 +330,6 @@ export default function App() {
     [minBeatLevel]
   );
 
-  /*========================================*
-   *    Real-time Scorification Debugs      *
-   *========================================*/
-  const positionCounterRef = React.useRef<number>(0);
-  const beatCounterRef = React.useRef<number>(0);
-  useEffect(() => {
-    const handleScorifyKeyPress = (e: KeyboardEvent) => {
-      if (NDEBUG) {
-        return;
-      }
-      // console.debug("scorify button pressed.")
-      // Demo: use keyboard keys to simulate note input
-      // Treble staff scale: E4(64) to F5(77)
-      // Bass staff scale: G2(43) to A3(57)
-      // Use predefined sequence of performance & beat tracking results, fixed delta time.
-
-      // Current position
-      const position = positionCounterRef.current;
-      const beatPos = beatCounterRef.current;
-      const isBeat = BEAT_TYPE_PRESET[position];
-      const note: NoteEvent = PERF_PRESET[position];
-      const beat: BeatEvent = BEAT_PRESET[beatPos];
-      addNote(note.midi, note.staff, note.timestamp);
-      if (isBeat) {
-        addBeat(beat.timestamp, beat.isDownbeat);
-        drawBuffedNotes();
-      }
-      positionCounterRef.current += 1;
-      if (isBeat) {
-        beatCounterRef.current += 1;
-      }
-    };
-
-    window.addEventListener("keypress", handleScorifyKeyPress);
-    return () => window.removeEventListener("keypress", handleScorifyKeyPress);
-  }, [drawNote, bpm]);
-
   useEffect(() => {
     (window as any).drawNote = drawNote;
     return () => {
@@ -356,12 +343,7 @@ export default function App() {
     resetScorify();
     sound.stopAllNotes();
     mbtRef.current?.reset();
-
-    positionCounterRef.current = 0;
-    beatCounterRef.current = 0;
-
     handSeparatorRef.current.reset();
-
     layoutStateRef.current = {
       currentMeasureIndex: 0,
       measureStartAbsoluteX: window.innerWidth * 0.5,
@@ -370,15 +352,6 @@ export default function App() {
     };
     setDrawCallback(drawNote);
   }, [drawNote, sound]);
-
-  // Key handlers (demo)
-  useEffect(() => {
-    const handleKeyPress = (e: KeyboardEvent) => {
-      if (e.key === "c") handleClear();
-    };
-    window.addEventListener("keypress", handleKeyPress);
-    return () => window.removeEventListener("keypress", handleKeyPress);
-  }, [handleClear]);
 
   function computeTatum(level: number) {
     return Math.round(level / 4);
@@ -439,32 +412,6 @@ export default function App() {
           <h2 className="text-gray-700 text-sm">88-Key Piano Keyboard</h2>
           <PianoKeyboard pressedKeys={pressedKeys} />
         </div>
-
-        <h4>Tips</h4>
-        <ul className="text-gray-600 text-sm">
-          <li>1. Scorify requires a MIDI keyboard to interact!</li>
-          <li>
-            2. Notes predicted to be on-beat are purple. Off-beat notes are
-            black.
-          </li>
-          <li>3. You can hint the model by foot tapping on a pedal!</li>
-          <li>
-            4. Scorification (visualization) currently only supports 3/4, 4/4,
-            6/4 ... (any meter ending with 4 or 2), else you will see weird note
-            spacing.
-          </li>
-          <li>
-            5. However, beat tracking should support any meter! (or those
-            covered in the training data -
-            <a
-              target="_blank"
-              href="https://cheriell.github.io/research/ACPAS_dataset/"
-            >
-              ACPAS
-            </a>
-            )
-          </li>
-        </ul>
       </div>
     </div>
   );
