@@ -21,13 +21,10 @@ window.my = window.my || {};
       //     "Loading weights manifest from",
       //     `${paramsDir}/tfjs/weights_manifest.json`
       //   );
-      console.debug(
-        "fetch weights manifest, path:",
-        `${paramsDir}/tfjs/weights_manifest.json`
-      );
-      const manifest = await fetch(`${paramsDir}/tfjs/weights_manifest.json`);
+      console.debug("fetch weights manifest, path:", `weights_manifest.json`);
+      const manifest = await fetch(`weights_manifest.json`);
       const manifestJson = await manifest.json();
-      this._params = await tf.io.loadWeights(manifestJson, `${paramsDir}/tfjs`);
+      this._params = await tf.io.loadWeights(manifestJson, "");
       //   console.log("Load finished");
     }
 
@@ -324,9 +321,7 @@ window.my = window.my || {};
     await decoder.init();
 
     // Fetch test case
-    const t = await fetch(`${DEFAULT_CKPT_DIR}/test.json`).then((r) =>
-      r.json()
-    );
+    const t = await fetch(`test.json`).then((r) => r.json());
 
     // Run test
     let totalErr = 0;
@@ -382,7 +377,7 @@ window.my = window.my || {};
 
     // Fetch test case
     console.debug("fetch beatss test json");
-    const t = await fetch(`${BEATSS_CKPT_DIR}/test.json`).then((r) => r.json());
+    const t = await fetch(`test.json`).then((r) => r.json());
     // Run test
     let totalBeatErr = 0;
     let totalDownBeatErr = 0;
