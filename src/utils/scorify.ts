@@ -235,3 +235,46 @@ function getVirtualBeats(currentBeatTime: number): number {
     const n = Math.round(observed / expected) - 1;
     return Math.max(0, n);
 }
+
+
+//======= Debug Events=========
+export const PERF_PRESET: NoteEvent[] = [
+    // E F GABG | C D E
+    // C C C B  | A B C
+    { midi: 60, staff: 'bass', timestamp: 0 },
+    { midi: 64, staff: 'treble', timestamp: 0 },
+    { midi: 60, staff: 'bass', timestamp: 1000 },
+    { midi: 65, staff: 'treble', timestamp: 1000 },
+    { midi: 60, staff: 'bass', timestamp: 2000 },
+    { midi: 67, staff: 'treble', timestamp: 2000 },
+    { midi: 69, staff: 'treble', timestamp: 2500 },
+    { midi: 59, staff: 'bass', timestamp: 3000 },
+    { midi: 71, staff: 'treble', timestamp: 3000 },
+    { midi: 67, staff: 'treble', timestamp: 3500 },
+    { midi: 57, staff: 'bass', timestamp: 4000 },
+    { midi: 72, staff: 'treble', timestamp: 4000 },
+    { midi: 59, staff: 'bass', timestamp: 5000 },
+    { midi: 74, staff: 'treble', timestamp: 5000 },
+    { midi: 60, staff: 'bass', timestamp: 6000 },
+    { midi: 76, staff: 'treble', timestamp: 6000 },
+];
+export const BEAT_TYPE_PRESET: boolean[] = [
+    true, true, false, false, false, true, false, true, true, false, true, true, true, true, true, true
+]
+export const BEAT_PRESET: BeatEvent[] = [
+    { timestamp: 0, isDownbeat: true },
+    { timestamp: 0, isDownbeat: true },
+    // { timestamp: 1000, isDownbeat: false },
+    // { timestamp: 1000, isDownbeat: false },
+    // { timestamp: 2000, isDownbeat: false },
+    // { timestamp: 2000, isDownbeat: false },
+    { timestamp: 2500, isDownbeat: false },
+    { timestamp: 3000, isDownbeat: false },
+    { timestamp: 3000, isDownbeat: false },
+    { timestamp: 4000, isDownbeat: true },
+    { timestamp: 4000, isDownbeat: true },
+    { timestamp: 5000, isDownbeat: false },
+    { timestamp: 5000, isDownbeat: false },
+    { timestamp: 6000, isDownbeat: false },
+    { timestamp: 6000, isDownbeat: false },
+];

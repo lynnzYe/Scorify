@@ -21,6 +21,11 @@ import {
   Staff,
   updateTatum,
   drawBuffedNotes,
+  BEAT_TYPE_PRESET,
+  NoteEvent,
+  BeatEvent,
+  PERF_PRESET,
+  BEAT_PRESET,
 } from "./utils/scorify";
 import { BEAT_THRES, DOWNBEAT_THRES } from "./model/beat-tracker";
 
@@ -44,6 +49,7 @@ export default function App() {
   const midi = useMIDI();
   const sound = useSoundFont();
   const handSeparatorRef = useRef(new HandSeparator());
+  const lastTimeMsRef = useRef(0);
 
   // SYNCHRONOUS LAYOUT STATE
   // Critical for atomic bar updates
@@ -98,6 +104,17 @@ export default function App() {
     );
     const beatProb = beatProbTensor.dataSync()[0];
     const downbeatProb = downbeatProbTensor.dataSync()[0];
+    const last = lastTimeMsRef.current;
+    let dt = last ? ((timeMs - last) / 1000).toFixed(3) : 0;
+    const latencyMs = performance.now() - timeMs;
+    console.info(
+      `⌚ ${dt}s, 🔘 ${pitch} beat=${beatProb.toFixed(
+        3
+      )} downbeat=${downbeatProb.toFixed(
+        3
+      )} (end-to-end latency ${latencyMs.toFixed(1)}ms)`
+    );
+    lastTimeMsRef.current = timeMs;
     beatProbTensor.dispose();
     downbeatProbTensor.dispose();
     return [beatProb, downbeatProb];
@@ -289,6 +306,43 @@ export default function App() {
     [minBeatLevel]
   );
 
+  /*========================================*
+   *    Real-time Scorification Debugs      *
+   *========================================*/
+  const positionCounterRef = React.useRef<number>(0);
+  const beatCounterRef = React.useRef<number>(0);
+  useEffect(() => {
+    const handleScorifyKeyPress = (e: KeyboardEvent) => {
+      if (NDEBUG) {
+        return;
+      }
+      // console.debug("scorify button pressed.")
+      // Demo: use keyboard keys to simulate note input
+      // Treble staff scale: E4(64) to F5(77)
+      // Bass staff scale: G2(43) to A3(57)
+      // Use predefined sequence of performance & beat tracking results, fixed delta time.
+
+      // Current position
+      const position = positionCounterRef.current;
+      const beatPos = beatCounterRef.current;
+      const isBeat = BEAT_TYPE_PRESET[position];
+      const note: NoteEvent = PERF_PRESET[position];
+      const beat: BeatEvent = BEAT_PRESET[beatPos];
+      addNote(note.midi, note.staff, note.timestamp);
+      if (isBeat) {
+        addBeat(beat.timestamp, beat.isDownbeat);
+        drawBuffedNotes();
+      }
+      positionCounterRef.current += 1;
+      if (isBeat) {
+        beatCounterRef.current += 1;
+      }
+    };
+
+    window.addEventListener("keypress", handleScorifyKeyPress);
+    return () => window.removeEventListener("keypress", handleScorifyKeyPress);
+  }, [drawNote, bpm]);
+
   useEffect(() => {
     (window as any).drawNote = drawNote;
     return () => {
@@ -303,7 +357,9 @@ export default function App() {
     sound.stopAllNotes();
     mbtRef.current?.reset();
 
-    // 3. Reset the separator when clearing score
+    positionCounterRef.current = 0;
+    beatCounterRef.current = 0;
+
     handSeparatorRef.current.reset();
 
     layoutStateRef.current = {
