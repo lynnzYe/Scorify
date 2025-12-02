@@ -78,13 +78,13 @@ export const useMIDI = (): UseMIDIReturn => {
             setMidiAccess(access);
 
             const updateConnectionState = () => {
-                console.log("MIDI inputs:", Array.from(access.inputs.values()), 'size:', access.inputs.size)
+                console.debug("MIDI inputs:", Array.from(access.inputs.values()), 'size:', access.inputs.size)
                 let hasPhysicalDevice = Array.from(access.inputs.values()).some(input =>
                     input.state === "connected" &&
                     // input.connection === "open" && 
                     input.manufacturer !== ""
                 );
-                console.log("Has physical device?:", hasPhysicalDevice)
+                console.debug("Has physical device?:", hasPhysicalDevice)
                 access.onstatechange = (e) => {
                     console.debug("Port updated:", e.port?.name, e.port?.connection);
                     hasPhysicalDevice = Array.from(access.inputs.values()).some(input =>
